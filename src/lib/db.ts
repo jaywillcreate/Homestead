@@ -209,6 +209,10 @@ ALTER TABLE bids ADD COLUMN IF NOT EXISTS favorable INTEGER;
 ALTER TABLE bid_requests ADD COLUMN IF NOT EXISTS category TEXT;
 ALTER TABLE bid_requests ADD COLUMN IF NOT EXISTS priority TEXT;
 ALTER TABLE bid_requests ADD COLUMN IF NOT EXISTS budget DOUBLE PRECISION;
+-- Ticket pipeline gained a 'scheduled' stage; recreate the status check.
+ALTER TABLE bid_requests DROP CONSTRAINT IF EXISTS bid_requests_status_check;
+ALTER TABLE bid_requests ADD CONSTRAINT bid_requests_status_check
+  CHECK (status IN ('open','closed','accepted','scheduled'));
 `;
 
 function getPool(): Pool {

@@ -12,6 +12,8 @@ const createSchema = z.object({
   /** When the vendor isn't in the book yet, optionally add them. */
   vendor_name: z.string().trim().max(200).optional(),
   add_to_book: z.boolean().optional(),
+  /** When scheduling from a bid, advances that bid's request to 'scheduled'. */
+  bid_id: z.number().int().optional(),
 });
 
 /** POST → put a job on the schedule (e.g. from an accepted or invited bid). */
@@ -54,6 +56,16 @@ export async function POST(req: Request) {
         contractorId ? "confirmed" : "todo", notes,
       ]
     );
+    // Scheduling a bid moves its ticket along the pipeline: open/accepted → scheduled.
+    if (d.bid_id) {
+      await run(
+        `UPDATE bid_requests SET status = 'scheduled'
+         WHERE id = (SELECT bid_request_id FROM bids WHERE id = $1)
+           AND status IN ('open', 'accepted')`,
+        [d.bid_id]
+      );
+    }
+
     await logActivity("schedule", `${d.name} scheduled for ${d.scheduled_for}`);
     return Response.json({ id, contractor_id: contractorId }, { status: 201 });
   } catch (err) {

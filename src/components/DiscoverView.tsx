@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   MagnifyingGlass, ChatCircle, MapPin, X, Star, CalendarPlus, PlusCircle,
-  ClockCounterClockwise, ThumbsUp, ThumbsDown, NotePencil, Trash, Plus,
-  PencilSimple, CaretLeft, CaretRight, ListBullets,
+  ThumbsUp, ThumbsDown, NotePencil, Trash, Plus,
+  PencilSimple, CaretLeft, CaretRight, ListBullets, Ticket,
 } from "@phosphor-icons/react";
 import { money, shortDate, initials } from "@/lib/format";
 import { TRADES, type Bid, type BidRequest } from "@/lib/types";
@@ -45,8 +45,9 @@ function priorityTag(priority: BidRequest["priority"]) {
 }
 
 function requestStatusTag(status: BidRequest["status"]) {
-  if (status === "open") return <span className="tag tag-outline">Open</span>;
+  if (status === "open") return <span className="tag tag-outline">Open for bids</span>;
   if (status === "accepted") return <span className="tag tag-accent">Accepted</span>;
+  if (status === "scheduled") return <span className="tag tag-accent-2">Scheduled</span>;
   return <span className="tag tag-neutral">Closed</span>;
 }
 
@@ -241,23 +242,28 @@ export function DiscoverView({
 
   return (
     <>
-      {/* ————— requests ————— */}
-      {requests.length > 1 && (
-        <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", alignItems: "center" }}>
-          {requests.map((r) => (
-            <button key={r.id} className="chip" aria-pressed={featured?.id === r.id}
-              onClick={() => setFeaturedId(r.id)} title={r.title}>
-              {r.title.length > 34 ? r.title.slice(0, 32) + "…" : r.title}
-              <span style={{ opacity: 0.6, fontSize: 11 }}>· {r.bids.length}</span>
-            </button>
-          ))}
-        </div>
+      {/* ————— request queue: the property-task ticketing module ————— */}
+      {requests.length > 0 && (
+        <RequestQueue
+          requests={requests}
+          featuredId={featured?.id ?? null}
+          canBid={canBid}
+          onSelect={setFeaturedId}
+          onEdit={(r) => setRequestDialog(r)}
+          onNew={() => setRequestDialog("new")}
+        />
       )}
 
       {featured && (
         <div className="card">
           <div className="kicker">
-            {featured.status === "open" ? "Open request" : featured.status === "accepted" ? "Accepted request" : "Closed request"}
+            {featured.status === "open"
+              ? "Open request"
+              : featured.status === "accepted"
+                ? "Accepted request"
+                : featured.status === "scheduled"
+                  ? "Scheduled request"
+                  : "Closed request"}
           </div>
           <div style={{ display: "flex", gap: "var(--space-4)", alignItems: "flex-start", flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 240 }}>
@@ -541,47 +547,6 @@ export function DiscoverView({
       {/* ————— all bids, paginated ————— */}
       <AllBidsSection requests={requests} canBid={canBid} onOpenBid={(b) => setEditBid(b)} />
 
-      {/* ————— request history ————— */}
-      {requests.length > 1 && (
-        <div className="card">
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <ClockCounterClockwise size={16} style={{ color: "var(--color-accent-text)" }} />
-            <div className="card-title">Request history</div>
-          </div>
-          <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Request</th><th>Category</th><th>Posted</th><th>Bids</th><th>Outcome</th>
-                  <th style={{ textAlign: "right" }}>Winning price</th>
-                </tr>
-              </thead>
-              <tbody>
-                {requests.map((h) => {
-                  const accepted = h.bids.find((b) => b.status === "accepted");
-                  return (
-                    <tr key={h.id} style={{ cursor: "pointer" }} onClick={() => setFeaturedId(h.id)}>
-                      <td style={{ fontSize: 13 }}>{h.title}</td>
-                      <td>{h.category ? <span className="tag tag-accent-2">{h.category}</span> : "—"}</td>
-                      <td className="num">{shortDate(h.posted_at?.slice(0, 10))}</td>
-                      <td className="num">{h.bids.length}</td>
-                      <td>
-                        {accepted ? (
-                          <span className="tag tag-accent">{accepted.vendor_name}</span>
-                        ) : (
-                          requestStatusTag(h.status)
-                        )}
-                      </td>
-                      <td className="num-cell">{accepted?.price != null ? money(accepted.price) : "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
       {/* ————— dialogs & toast ————— */}
       {editBid && (
         <BidDetailsDialog
@@ -617,6 +582,119 @@ export function DiscoverView({
       )}
       {toast && <div className="toast">{toast}</div>}
     </>
+  );
+}
+
+/* ————— request queue: running ticket list for property tasks ————— */
+
+const STATUS_ORDER: Record<BidRequest["status"], number> = {
+  open: 0, accepted: 1, scheduled: 2, closed: 3,
+};
+const PRIORITY_ORDER: Record<string, number> = { high: 0, normal: 1, low: 2 };
+
+function RequestQueue({
+  requests, featuredId, canBid, onSelect, onEdit, onNew,
+}: {
+  requests: RequestEntry[];
+  featuredId: number | null;
+  canBid: boolean;
+  onSelect: (id: number) => void;
+  onEdit: (r: RequestEntry) => void;
+  onNew: () => void;
+}) {
+  const sorted = useMemo(
+    () =>
+      [...requests].sort((a, b) => {
+        const s = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+        if (s !== 0) return s;
+        const p =
+          (PRIORITY_ORDER[a.priority ?? "normal"] ?? 1) -
+          (PRIORITY_ORDER[b.priority ?? "normal"] ?? 1);
+        if (p !== 0) return p;
+        return (b.posted_at ?? "").localeCompare(a.posted_at ?? "");
+      }),
+    [requests]
+  );
+  const counts = useMemo(() => {
+    const c = { open: 0, accepted: 0, scheduled: 0, closed: 0 };
+    for (const r of requests) c[r.status]++;
+    return c;
+  }, [requests]);
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Ticket size={17} style={{ color: "var(--color-accent-text)" }} />
+          <div className="card-title">Request queue</div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <span className="tag tag-outline num">{counts.open} open</span>
+          {counts.accepted > 0 && <span className="tag tag-accent num">{counts.accepted} accepted</span>}
+          {counts.scheduled > 0 && <span className="tag tag-accent-2 num">{counts.scheduled} scheduled</span>}
+          {counts.closed > 0 && <span className="tag tag-neutral num">{counts.closed} closed</span>}
+        </div>
+        <span style={{ flex: 1 }} />
+        {canBid && (
+          <button className="btn btn-primary" onClick={onNew}>
+            <Plus size={15} /> New request
+          </button>
+        )}
+      </div>
+      <p className="card-body" style={{ margin: 0 }}>
+        Property tasks queue here for bidding, then move to scheduling. Click a ticket to work
+        its bids below.
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>#</th><th>Task</th><th>Category</th><th>Priority</th><th>Bids</th>
+              <th style={{ textAlign: "right" }}>Best bid</th><th>Status</th>
+              {canBid && <th aria-label="Actions" />}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r) => {
+              const prices = r.bids.filter((b) => b.price != null && b.status !== "declined");
+              const best = prices.length ? Math.min(...prices.map((b) => b.price!)) : null;
+              const isFeatured = r.id === featuredId;
+              return (
+                <tr
+                  key={r.id}
+                  onClick={() => onSelect(r.id)}
+                  style={{
+                    cursor: "pointer",
+                    background: isFeatured
+                      ? "color-mix(in srgb, var(--color-accent) 10%, transparent)"
+                      : undefined,
+                  }}
+                  aria-selected={isFeatured}
+                >
+                  <td className="num text-muted" style={{ fontSize: 12 }}>#{r.id}</td>
+                  <td style={{ fontSize: 13, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {r.title}
+                  </td>
+                  <td>{r.category ? <span className="tag tag-accent-2">{r.category}</span> : <span className="text-muted">—</span>}</td>
+                  <td>{priorityTag(r.priority) ?? <span className="text-muted" style={{ fontSize: 12.5 }}>Normal</span>}</td>
+                  <td className="num">{r.bids.length}</td>
+                  <td className="num-cell">{best != null ? money(best) : "—"}</td>
+                  <td>{requestStatusTag(r.status)}</td>
+                  {canBid && (
+                    <td onClick={(e) => e.stopPropagation()} style={{ textAlign: "right" }}>
+                      <button className="btn btn-icon" style={{ width: 30, height: 30, minHeight: 30 }}
+                        title="Edit request" onClick={() => onEdit(r)}>
+                        <PencilSimple size={14} />
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -1138,6 +1216,7 @@ function ScheduleBidDialog({
           vendor_name: bid.vendor_name,
           add_to_book: bid.contractor_id == null ? addToBook : false,
           notes: bid.price != null ? `Bid: ${money(bid.price)}` : null,
+          bid_id: bid.id,
         }),
       });
       const body = await res.json();

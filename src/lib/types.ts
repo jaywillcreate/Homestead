@@ -131,7 +131,8 @@ export interface BidRequest {
   scope: string | null;
   posted_at: string;
   closes_at: string | null;
-  status: "open" | "closed" | "accepted";
+  /** Ticket pipeline: open (bidding) → accepted → scheduled → closed. */
+  status: "open" | "closed" | "accepted" | "scheduled";
   /** Trade category, e.g. "Plumbing", "Outdoor & landscaping". */
   category: string | null;
   priority: "low" | "normal" | "high" | null;

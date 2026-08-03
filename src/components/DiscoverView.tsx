@@ -103,10 +103,17 @@ function RequestSelect({
 
 /* ————— main view ————— */
 
+export interface BookContractor {
+  id: number;
+  name: string;
+  trade: string;
+}
+
 export function DiscoverView({
-  requests, canBid, canSchedule,
+  requests, contractors, canBid, canSchedule,
 }: {
   requests: RequestEntry[];
+  contractors: BookContractor[];
   canBid: boolean;
   canSchedule: boolean;
 }) {
@@ -561,6 +568,8 @@ export function DiscoverView({
         <ManualBidDialog
           openRequests={openRequests}
           defaultRequestId={featured?.status === "open" ? featured.id : openRequests[0]?.id}
+          contractors={contractors}
+          requestCategory={featured?.category ?? null}
           onClose={() => setManualOpen(false)}
           onDone={(msg) => { setManualOpen(false); showToast(msg); router.refresh(); }}
         />
@@ -1085,14 +1094,17 @@ function BidDetailsDialog({
 /* ————— manual bid entry ————— */
 
 function ManualBidDialog({
-  openRequests, defaultRequestId, onClose, onDone,
+  openRequests, defaultRequestId, contractors, requestCategory, onClose, onDone,
 }: {
   openRequests: RequestEntry[];
   defaultRequestId: number | undefined;
+  contractors: BookContractor[];
+  requestCategory: string | null;
   onClose: () => void;
   onDone: (msg: string) => void;
 }) {
   const [vendor, setVendor] = useState("");
+  const [bookId, setBookId] = useState<number | "">("");
   const [price, setPrice] = useState("");
   const [startDate, setStartDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -1102,6 +1114,18 @@ function ManualBidDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Contractors whose trade matches the request's category surface first.
+  const sortedBook = useMemo(
+    () =>
+      [...contractors].sort((a, b) => {
+        const am = requestCategory && a.trade === requestCategory ? 0 : 1;
+        const bm = requestCategory && b.trade === requestCategory ? 0 : 1;
+        return am - bm || a.name.localeCompare(b.name);
+      }),
+    [contractors, requestCategory]
+  );
+  const chosen = bookId === "" ? null : contractors.find((c) => c.id === bookId) ?? null;
+
   async function save() {
     setError(null);
     setBusy(true);
@@ -1110,7 +1134,7 @@ function ManualBidDialog({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          vendor_name: vendor.trim(),
+          ...(chosen ? { contractor_id: chosen.id } : { vendor_name: vendor.trim() }),
           price: price === "" ? null : Number(price),
           start_date: startDate || null,
           notes: notes.trim() || null,
@@ -1124,7 +1148,7 @@ function ManualBidDialog({
         setError(body.error ?? "Could not add bid");
         return;
       }
-      onDone(`${vendor.trim()} added to bids.`);
+      onDone(`${chosen?.name ?? vendor.trim()} added to bids.`);
     } finally {
       setBusy(false);
     }
@@ -1135,14 +1159,37 @@ function ManualBidDialog({
       <div className="dialog" role="dialog" aria-label="Add bid manually">
         <div className="dialog-title">Add bid</div>
         <p className="card-body" style={{ margin: 0 }}>
-          Enter a quote you collected by phone, text, or in person. Known contractors link to your
-          book automatically.
+          Attach a contractor from your book, or enter a quote you collected by phone, text, or in
+          person.
         </p>
-        <div className="field">
-          <label>Contractor / company name</label>
-          <input className="input" value={vendor} onChange={(e) => setVendor(e.target.value)}
-            placeholder="e.g. Mesa Verde Fence & Gate" autoFocus />
-        </div>
+        {contractors.length > 0 && (
+          <div className="field">
+            <label>From your contractor book</label>
+            <select
+              className="input"
+              value={String(bookId)}
+              onChange={(e) => {
+                setBookId(e.target.value === "" ? "" : Number(e.target.value));
+                setError(null);
+              }}
+            >
+              <option value="">— Enter a name manually —</option>
+              {sortedBook.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} · {c.trade}
+                  {requestCategory && c.trade === requestCategory ? "  ◆ matches category" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {!chosen && (
+          <div className="field">
+            <label>Contractor / company name</label>
+            <input className="input" value={vendor} onChange={(e) => setVendor(e.target.value)}
+              placeholder="e.g. Mesa Verde Fence & Gate" autoFocus={contractors.length === 0} />
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
           <div className="field">
             <label>Bid price ($, optional)</label>
@@ -1176,7 +1223,8 @@ function ManualBidDialog({
         <div className="dialog-actions">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary"
-            disabled={busy || !vendor.trim() || (target === "new" && !title.trim())} onClick={save}>
+            disabled={busy || (!chosen && !vendor.trim()) || (target === "new" && !title.trim())}
+            onClick={save}>
             {busy ? "Adding…" : "Add bid"}
           </button>
         </div>

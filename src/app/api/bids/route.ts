@@ -6,7 +6,9 @@ const createSchema = z.object({
   bid_request_id: z.number().int().optional(),
   /** Used to open a fresh request when none is open. */
   title: z.string().trim().min(1).max(200).optional(),
-  vendor_name: z.string().trim().min(1).max(200),
+  /** Attach a contractor from the book directly; vendor_name then optional. */
+  contractor_id: z.number().int().optional(),
+  vendor_name: z.string().trim().min(1).max(200).optional(),
   meta: z.string().max(200).nullable().optional(),
   price: z.coerce.number().min(0).nullable().optional(),
   start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
@@ -26,6 +28,20 @@ export async function POST(req: Request) {
       return Response.json({ error: "Validation failed", issues: parsed.error.flatten() }, { status: 400 });
     }
     const d = parsed.data;
+
+    // A contractor from the book supplies its own identity.
+    let bookContractor: { id: number; business_name: string; trade: string; rating: number | null } | null = null;
+    if (d.contractor_id) {
+      bookContractor = await qOne(
+        "SELECT id, business_name, trade, rating FROM contractors WHERE id = $1 AND status != 'archived'",
+        [d.contractor_id]
+      );
+      if (!bookContractor) return Response.json({ error: "Contractor not found" }, { status: 404 });
+    }
+    const vendorName = bookContractor?.business_name ?? d.vendor_name;
+    if (!vendorName) {
+      return Response.json({ error: "Provide a vendor name or a contractor" }, { status: 400 });
+    }
 
     // Resolve the target request: explicit id → latest open → create from title.
     let request = d.bid_request_id
@@ -56,17 +72,19 @@ export async function POST(req: Request) {
 
     const dupe = await qOne(
       "SELECT id FROM bids WHERE bid_request_id = $1 AND lower(vendor_name) = lower($2)",
-      [request.id, d.vendor_name]
+      [request.id, vendorName]
     );
     if (dupe) {
-      return Response.json({ error: `${d.vendor_name} is already in this request` }, { status: 409 });
+      return Response.json({ error: `${vendorName} is already in this request` }, { status: 409 });
     }
 
-    // A known contractor entered manually links to the book automatically.
-    const known = await qOne<{ id: number }>(
-      "SELECT id FROM contractors WHERE lower(business_name) = lower($1) AND status != 'archived'",
-      [d.vendor_name]
-    );
+    // A known contractor entered by name links to the book automatically.
+    const known =
+      bookContractor ??
+      (await qOne<{ id: number; trade: string; rating: number | null }>(
+        "SELECT id, trade, rating FROM contractors WHERE lower(business_name) = lower($1) AND status != 'archived'",
+        [vendorName]
+      ));
 
     const hasPrice = d.price != null;
     const bidId = await run(
@@ -74,16 +92,16 @@ export async function POST(req: Request) {
          rating, review_count, review_excerpt, badge, status, notes, favorable)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
       [
-        request.id, known?.id ?? null, d.vendor_name,
-        d.meta ?? (known ? "Known contractor" : "Added manually"),
+        request.id, known?.id ?? null, vendorName,
+        d.meta ?? (known ? `Known contractor · ${known.trade}` : "Added manually"),
         d.price ?? null, d.start_date ?? null,
-        d.rating ?? null, d.review_count ?? null, d.review_excerpt ?? null,
+        d.rating ?? known?.rating ?? null, d.review_count ?? null, d.review_excerpt ?? null,
         known ? "In your book" : hasPrice ? null : "Awaiting bid",
         hasPrice ? "received" : "awaiting",
         d.notes ?? null, d.favorable ?? null,
       ]
     );
-    await logActivity("bid", `${d.vendor_name} added to bids on "${request.title}"`);
+    await logActivity("bid", `${vendorName} added to bids on "${request.title}"`);
     return Response.json({ id: bidId, bid_request_id: request.id }, { status: 201 });
   } catch (err) {
     return permissionResponse(err) ?? Response.json({ error: "Server error" }, { status: 500 });

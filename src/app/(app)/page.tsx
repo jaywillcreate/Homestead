@@ -10,17 +10,25 @@ import { Dashboard } from "@/components/Dashboard";
 
 export const dynamic = "force-dynamic";
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
   const today = new Date().toISOString().slice(0, 10);
   const ym = today.slice(0, 7);
+  const [metrics, spend, due, activity, topTrades, frequent] = await Promise.all([
+    dashboardMetrics(today),
+    monthlySpend(12),
+    dueThisMonth(ym, today),
+    recentActivity(4),
+    topTradesBySpend("2026"),
+    frequentContractors(4),
+  ]);
   return (
     <Dashboard
-      metrics={dashboardMetrics(today)}
-      spend={monthlySpend(12)}
-      due={dueThisMonth(ym, today)}
-      activity={recentActivity(4)}
-      topTrades={topTradesBySpend("2026")}
-      frequent={JSON.parse(JSON.stringify(frequentContractors(4)))}
+      metrics={metrics}
+      spend={spend}
+      due={due}
+      activity={activity}
+      topTrades={topTrades}
+      frequent={frequent}
       today={today}
     />
   );

@@ -16,16 +16,19 @@ export default async function SchedulePage({
   const ym = /^\d{4}-\d{2}$/.test(month ?? "") ? month! : today.slice(0, 7);
   const user = await getCurrentUser();
   const canManage = user ? can(user.role as Role, "manage_schedule") : false;
+  const [events, plan, contractors] = await Promise.all([
+    eventsForMonth(ym),
+    recurringPlan(),
+    listContractors(),
+  ]);
 
   return (
     <ScheduleView
       ym={ym}
       today={today}
-      events={JSON.parse(JSON.stringify(eventsForMonth(ym)))}
-      plan={JSON.parse(JSON.stringify(recurringPlan()))}
-      contractors={JSON.parse(
-        JSON.stringify(listContractors().map((c) => ({ id: c.id, name: c.business_name })))
-      )}
+      events={events}
+      plan={plan}
+      contractors={contractors.map((c) => ({ id: c.id, name: c.business_name }))}
       canManage={canManage}
       initialEventId={event ? Number(event) : null}
     />

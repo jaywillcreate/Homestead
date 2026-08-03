@@ -10,17 +10,19 @@ a custom theme builder.
 | Layer | Choice | Why |
 | --- | --- | --- |
 | Framework | Next.js 15 (App Router) + React 19 + TypeScript | URL-routed screens per the spec, server components for data, API routes for the backend |
-| Database | SQLite via better-sqlite3 (`storage/homestead.db`) | Zero-config, file-based, perfect for a household app; schema auto-applies on first run |
+| Database | Postgres via `pg` (Neon on Vercel, any Postgres locally) | Serverless-compatible; schema auto-applies on first query; `DATABASE_URL` is the only config |
 | Styling | Hand-built CSS design system (`src/app/globals.css`) | The handoff specifies exact tokens; tonal ramps derive via `color-mix` so themes are a token swap |
 | Auth | Cookie sessions + profile picker | Passwordless household sign-in; roles enforced **server-side** on every API route |
 | AI parsing | Claude API (`claude-opus-5`) with structured outputs | Extracts vendor, dates, totals, and labor/parts/fees line items from PDF/JPG scans |
-| File storage | `storage/uploads/`, served via auth-gated `/api/files/*` | Invoice scans and job photos never leave your machine |
+| File storage | Vercel Blob in production, `storage/uploads/` locally | `src/lib/storage.ts` switches on `BLOB_READ_WRITE_TOKEN`; local files served via auth-gated `/api/files/*` |
 
 ## Quick start
 
 ```bash
 cd homestead
 npm install
+brew install postgresql@17 && brew services start postgresql@17 && createdb homestead
+cp .env.example .env.local   # set DATABASE_URL=postgres://localhost:5432/homestead
 npm run db:seed     # seeds contractors, 2 years of jobs/invoices, schedule, bids, 3 users
 npm run dev         # http://localhost:3000
 ```
@@ -77,39 +79,36 @@ labeled sample data so the flow is demonstrable.
   `color-mix(in oklab, …)`. Custom themes persist per user server-side.
 - **Soft deletes** — deleting a contractor archives it, preserving job/invoice history.
 
-## Deploying
+## Deploying to Vercel
 
-### Vercel (planned target)
+The app is fully serverless-compatible: Postgres for data, Vercel Blob for uploads.
+One-time setup in the Vercel dashboard (project → **Storage** tab):
 
-Connecting the GitHub repo to Vercel is zero-config for the build — `next build` passes
-as-is (verified). **But two pieces of this app assume a persistent disk, which Vercel's
-serverless runtime does not have:**
+1. **Create a Database → Neon (Postgres)** and connect it to the project. This injects
+   `DATABASE_URL` into the project's environment automatically.
+2. **Create a Blob store** and connect it. This injects `BLOB_READ_WRITE_TOKEN`.
+3. Optionally add `ANTHROPIC_API_KEY` (AI invoice parsing) and `GOOGLE_PLACES_API_KEY`
+   (live local-pro search) under project → Settings → Environment Variables.
+4. **Redeploy** (push any commit, or Deployments → Redeploy) so the new env takes effect.
+5. **Seed the production database once** — copy the Neon `DATABASE_URL` from Vercel
+   (Storage → your database → `.env.local` snippet) into your local `.env.local`,
+   run `npm run db:seed`, then switch `.env.local` back to your local Postgres.
+   The schema itself auto-creates on first request; seeding just adds the household
+   users and demo data. On an empty database the login screen will tell you to seed.
 
-| Local piece | Why it breaks on Vercel | Serverless replacement |
-| --- | --- | --- |
-| SQLite at `storage/homestead.db` | Serverless filesystems are read-only/ephemeral — data written during a request vanishes | Postgres (Neon via Vercel Marketplace) — swap `src/lib/db.ts` + `src/lib/queries.ts` |
-| Uploads in `storage/uploads/` | Same — uploaded scans/photos disappear between invocations | Vercel Blob or S3/R2 — swap the write paths in the upload routes + `/api/files` |
+Every push to `main` auto-deploys; pull requests get preview deployments.
 
-Both are deliberately isolated behind small modules, so the migration is contained.
-Until that swap is done, treat a Vercel deployment as a **preview of the UI only** —
-records created there will not persist.
+Notes:
+- Uploaded files live in Vercel Blob at public-but-unguessable URLs (standard Blob
+  behavior); the database and all app screens remain session-gated.
+- The profile-picker sign-in is designed for a trusted household — add a real identity
+  layer (e.g. next-auth with Google sign-in) before sharing the URL widely.
 
-Vercel setup once the repo is on GitHub:
+## Self-hosting
 
-1. vercel.com → Add New Project → Import the `homestead` repo (framework auto-detects
-   Next.js; no build settings needed).
-2. Add environment variables as desired: `ANTHROPIC_API_KEY` (AI invoice parsing),
-   `GOOGLE_PLACES_API_KEY` (live local-pro search).
-3. Every push to `main` auto-deploys; pull requests get preview deployments.
-
-Also note the profile-picker sign-in is designed for a trusted household — add a real
-identity layer (e.g. next-auth with Google sign-in) before sharing a public URL.
-
-### Self-hosted (works today, zero changes)
-
-`npm run build && npm run start` on any box with Node — Mac mini, home server, Raspberry
-Pi-class hardware. Keep `storage/` on persistent disk and back it up (it is the entire
-application state). Put it behind Tailscale or a VPN for access away from home.
+Works anywhere Node + Postgres run: `npm run build && npm run start` with
+`DATABASE_URL` set. Without `BLOB_READ_WRITE_TOKEN`, uploads store on local disk under
+`storage/uploads/` — keep that folder (and your Postgres data) backed up.
 
 ## Project layout
 

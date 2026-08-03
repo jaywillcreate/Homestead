@@ -1,8 +1,7 @@
-import path from "path";
-import fs from "fs";
 import crypto from "crypto";
-import { getDb, logActivity, UPLOADS_DIR } from "@/lib/db";
+import { run, logActivity } from "@/lib/db";
 import { requirePermission, permissionResponse } from "@/lib/auth";
+import { saveUpload } from "@/lib/storage";
 import { parseInvoiceFile } from "@/lib/invoice-parser";
 import { getInvoice } from "@/lib/queries";
 
@@ -13,8 +12,8 @@ const MAX_BYTES = 25 * 1024 * 1024;
 
 /**
  * POST multipart/form-data { file } →
- * stores the scan, runs extraction, creates a DRAFT invoice + line items,
- * and returns the draft for the user to confirm.
+ * stores the scan (Vercel Blob or local disk), runs extraction, creates a
+ * DRAFT invoice + line items, and returns the draft for the user to confirm.
  */
 export async function POST(req: Request) {
   try {
@@ -33,64 +32,66 @@ export async function POST(req: Request) {
     }
 
     let buffer = Buffer.from(await file.arrayBuffer());
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "invoice";
-    const dir = path.join(UPLOADS_DIR, "invoices");
-    fs.mkdirSync(dir, { recursive: true });
-    let storedName = `${crypto.randomBytes(6).toString("hex")}-${safeName}`;
     let effectiveMime = mime;
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "invoice";
+    let storedName = `${crypto.randomBytes(6).toString("hex")}-${safeName}`;
 
-    // HEIC isn't accepted by the vision API — convert with macOS sips when available.
+    // HEIC isn't accepted by the vision API — convert with macOS sips when available (local dev).
     if (mime === "image/heic") {
-      const heicPath = path.join(dir, storedName);
-      fs.writeFileSync(heicPath, buffer);
-      const jpegPath = heicPath.replace(/\.[^.]*$/, "") + ".jpg";
       try {
+        const os = await import("os");
+        const path = await import("path");
+        const fs = await import("fs");
         const { execFileSync } = await import("child_process");
-        execFileSync("sips", ["-s", "format", "jpeg", heicPath, "--out", jpegPath], { stdio: "ignore" });
-        buffer = fs.readFileSync(jpegPath);
+        const tmpIn = path.join(os.tmpdir(), `${crypto.randomBytes(6).toString("hex")}.heic`);
+        const tmpOut = tmpIn.replace(/\.heic$/, ".jpg");
+        fs.writeFileSync(tmpIn, buffer);
+        execFileSync("sips", ["-s", "format", "jpeg", tmpIn, "--out", tmpOut], { stdio: "ignore" });
+        buffer = fs.readFileSync(tmpOut);
         effectiveMime = "image/jpeg";
-        storedName = path.basename(jpegPath);
-        fs.unlinkSync(heicPath);
+        storedName = storedName.replace(/\.heic$/i, ".jpg");
+        fs.unlinkSync(tmpIn);
+        fs.unlinkSync(tmpOut);
       } catch {
         effectiveMime = "image/heic"; // parse will fall back to manual entry
       }
-    } else {
-      fs.writeFileSync(path.join(dir, storedName), buffer);
     }
 
-    const storedPath = `invoices/${storedName}`;
+    const stored = await saveUpload(buffer, `invoices/${storedName}`, effectiveMime);
+
     const result =
       effectiveMime === "image/heic"
         ? { extraction: null, matched_contractor_id: null, error: "HEIC could not be converted — enter fields manually." }
         : await parseInvoiceFile(buffer, effectiveMime);
 
-    const db = getDb();
     const e = result.extraction;
-    const invId = db
-      .prepare(
-        `INSERT INTO invoices (contractor_id, vendor, invoice_number, invoice_date, due_date, total,
-           category, warranty_months, payment_status, source_file, source_filename, parse_confidence,
-           parsed_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, datetime('now'), 'draft')`
-      )
-      .run(
+    const invId = (await run(
+      `INSERT INTO invoices (contractor_id, vendor, invoice_number, invoice_date, due_date, total,
+         category, warranty_months, payment_status, source_file, source_filename, parse_confidence,
+         parsed_at, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'unpaid',$9,$10,$11,
+         to_char(now() at time zone 'utc','YYYY-MM-DD HH24:MI:SS'),'draft') RETURNING id`,
+      [
         result.matched_contractor_id, e?.vendor ?? null, e?.invoice_number ?? null,
         e?.invoice_date ?? null, e?.due_date ?? null, e?.total ?? 0, e?.category ?? null,
-        e?.warranty_months ?? null, storedPath, file.name, e?.confidence ?? null
-      ).lastInsertRowid as number;
+        e?.warranty_months ?? null, stored, file.name, e?.confidence ?? null,
+      ]
+    ))!;
 
     if (e) {
-      const insertLine = db.prepare(
-        "INSERT INTO invoice_line_items (invoice_id, description, type, amount) VALUES (?, ?, ?, ?)"
-      );
-      for (const li of e.line_items) insertLine.run(invId, li.description, li.type, li.amount);
-      logActivity(
+      for (const li of e.line_items) {
+        await run(
+          "INSERT INTO invoice_line_items (invoice_id, description, type, amount) VALUES ($1,$2,$3,$4) RETURNING id",
+          [invId, li.description, li.type, li.amount]
+        );
+      }
+      await logActivity(
         "invoice",
         `Invoice ${e.invoice_number ?? file.name} parsed${result.matched_contractor_id ? " and matched to " + e.vendor : ""} by ${user.name}`
       );
     }
 
-    return Response.json({ invoice: getInvoice(invId), parse_error: result.error }, { status: 201 });
+    return Response.json({ invoice: await getInvoice(invId), parse_error: result.error }, { status: 201 });
   } catch (err) {
     return permissionResponse(err) ?? Response.json({ error: "Upload failed" }, { status: 500 });
   }

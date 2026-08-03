@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getDb, logActivity } from "@/lib/db";
+import { run, logActivity } from "@/lib/db";
 import { requirePermission, permissionResponse } from "@/lib/auth";
 
 const createSchema = z.object({
@@ -21,19 +21,17 @@ export async function POST(req: Request) {
       return Response.json({ error: "Validation failed", issues: parsed.error.flatten() }, { status: 400 });
     }
     const d = parsed.data;
-    const db = getDb();
-    const taskId = db
-      .prepare(
-        `INSERT INTO maintenance_tasks (property_id, name, trade, cadence, assigned_contractor_id, estimated_cost, notes)
-         VALUES ((SELECT id FROM properties LIMIT 1), ?, ?, ?, ?, ?, ?)`
-      )
-      .run(d.name, d.trade ?? null, d.cadence, d.assigned_contractor_id ?? null, d.estimated_cost ?? null, d.notes ?? null)
-      .lastInsertRowid as number;
-    db.prepare(
+    const taskId = await run(
+      `INSERT INTO maintenance_tasks (property_id, name, trade, cadence, assigned_contractor_id, estimated_cost, notes)
+       VALUES ((SELECT id FROM properties LIMIT 1), $1, $2, $3, $4, $5, $6) RETURNING id`,
+      [d.name, d.trade ?? null, d.cadence, d.assigned_contractor_id ?? null, d.estimated_cost ?? null, d.notes ?? null]
+    );
+    await run(
       `INSERT INTO scheduled_events (task_id, property_id, contractor_id, name, trade, scheduled_for, status)
-       VALUES (?, (SELECT id FROM properties LIMIT 1), ?, ?, ?, ?, 'todo')`
-    ).run(taskId, d.assigned_contractor_id ?? null, d.name, d.trade ?? null, d.first_due);
-    logActivity("schedule", `Recurring task added: ${d.name} (${d.cadence})`);
+       VALUES ($1, (SELECT id FROM properties LIMIT 1), $2, $3, $4, $5, 'todo') RETURNING id`,
+      [taskId, d.assigned_contractor_id ?? null, d.name, d.trade ?? null, d.first_due]
+    );
+    await logActivity("schedule", `Recurring task added: ${d.name} (${d.cadence})`);
     return Response.json({ id: taskId }, { status: 201 });
   } catch (err) {
     return permissionResponse(err) ?? Response.json({ error: "Server error" }, { status: 500 });

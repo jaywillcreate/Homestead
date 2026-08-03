@@ -1,6 +1,6 @@
 import path from "path";
 import fs from "fs";
-import { UPLOADS_DIR } from "@/lib/db";
+import { UPLOADS_DIR } from "@/lib/storage";
 import { requirePermission, permissionResponse } from "@/lib/auth";
 
 const MIME: Record<string, string> = {

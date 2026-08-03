@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CloudArrowUp, File as FileIcon } from "@phosphor-icons/react";
-import { money, shortDate, dayMonth } from "@/lib/format";
+import { money, shortDate, dayMonth, fileHref } from "@/lib/format";
 import type { Invoice, InvoiceLineItem } from "@/lib/types";
 
 type Draft = Invoice & { line_items: InvoiceLineItem[] };
@@ -88,7 +88,8 @@ export function InvoiceWorkbench({
   const parts = draft?.line_items.filter((l) => l.type === "parts").reduce((a, b) => a + b.amount, 0) ?? 0;
   const fees = draft?.line_items.filter((l) => l.type === "fees").reduce((a, b) => a + b.amount, 0) ?? 0;
 
-  const isImage = draft?.source_file && /\.(jpe?g|png|webp|gif|svg)$/i.test(draft.source_file);
+  const isImage =
+    draft?.source_file && /\.(jpe?g|png|webp|gif|svg)([?#].*)?$/i.test(draft.source_file);
 
   return (
     <>
@@ -154,9 +155,9 @@ export function InvoiceWorkbench({
               {draft.source_file ? (
                 isImage ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={`/api/files/${draft.source_file}`} alt="Invoice scan" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                  <img src={fileHref(draft.source_file!)} alt="Invoice scan" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                 ) : (
-                  <iframe src={`/api/files/${draft.source_file}`} title="Invoice scan" style={{ width: "100%", height: 480, border: "none" }} />
+                  <iframe src={fileHref(draft.source_file!)} title="Invoice scan" style={{ width: "100%", height: 480, border: "none" }} />
                 )
               ) : (
                 <span className="text-muted" style={{ fontSize: 13 }}>No scan on file</span>

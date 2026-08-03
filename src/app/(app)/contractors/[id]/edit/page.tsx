@@ -11,7 +11,7 @@ export default async function EditContractorPage({ params }: { params: Promise<{
   const { id } = await params;
   const user = await getCurrentUser();
   if (!user || !can(user.role as Role, "edit_contractors")) redirect(`/contractors/${id}`);
-  const contractor = getContractor(Number(id));
+  const contractor = await getContractor(Number(id));
   if (!contractor) notFound();
   return <ContractorForm existing={JSON.parse(JSON.stringify(contractor))} />;
 }

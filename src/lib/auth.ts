@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import crypto from "crypto";
-import { getDb } from "./db";
+import { q, qOne, run } from "./db";
 import type { Role, User } from "./types";
 import { can, type Capability } from "./permissions";
 
@@ -10,26 +10,22 @@ export async function getCurrentUser(): Promise<User | null> {
   const jar = await cookies();
   const token = jar.get(COOKIE)?.value;
   if (!token) return null;
-  const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`
-    )
-    .get(token) as User | undefined;
-  return row ?? null;
+  return qOne<User>(
+    `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1`,
+    [token]
+  );
 }
 
 /** Sign in as a household member. Returns the session token to set as a cookie. */
-export function createSession(userId: number): string {
-  const db = getDb();
+export async function createSession(userId: number): Promise<string> {
   const token = crypto.randomBytes(32).toString("hex");
-  db.prepare("INSERT INTO sessions (token, user_id) VALUES (?, ?)").run(token, userId);
-  db.prepare("UPDATE users SET last_active = datetime('now') WHERE id = ?").run(userId);
+  await run("INSERT INTO sessions (token, user_id) VALUES ($1, $2)", [token, userId]);
+  await touch(userId);
   return token;
 }
 
-export function destroySession(token: string) {
-  getDb().prepare("DELETE FROM sessions WHERE token = ?").run(token);
+export async function destroySession(token: string): Promise<void> {
+  await run("DELETE FROM sessions WHERE token = $1", [token]);
 }
 
 export const SESSION_COOKIE = COOKIE;
@@ -51,12 +47,15 @@ export async function requirePermission(capability: Capability): Promise<User> {
   if (!user) throw new PermissionError("Not signed in", 401);
   if (!can(user.role as Role, capability))
     throw new PermissionError(`Your role (${user.role}) cannot perform this action`);
-  db_touch(user.id);
+  await touch(user.id);
   return user;
 }
 
-function db_touch(userId: number) {
-  getDb().prepare("UPDATE users SET last_active = datetime('now') WHERE id = ?").run(userId);
+async function touch(userId: number) {
+  await q(
+    `UPDATE users SET last_active = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS') WHERE id = $1`,
+    [userId]
+  );
 }
 
 export function permissionResponse(err: unknown): Response | null {

@@ -1,8 +1,7 @@
-import path from "path";
-import fs from "fs";
 import crypto from "crypto";
-import { getDb, logActivity, UPLOADS_DIR } from "@/lib/db";
+import { run, qOne, logActivity } from "@/lib/db";
 import { requirePermission, permissionResponse } from "@/lib/auth";
+import { saveUpload } from "@/lib/storage";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "image/heic"]);
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -23,23 +22,26 @@ export async function POST(req: Request) {
     if (!["before", "during", "after", "record"].includes(stage)) {
       return Response.json({ error: "Invalid stage" }, { status: 400 });
     }
-    const db = getDb();
-    const job = db.prepare("SELECT id, title FROM jobs WHERE id = ?").get(jobId) as { id: number; title: string } | undefined;
+    const job = await qOne<{ id: number; title: string }>(
+      "SELECT id, title FROM jobs WHERE id = $1",
+      [jobId]
+    );
     if (!job) return Response.json({ error: "Job not found" }, { status: 404 });
 
-    const dir = path.join(UPLOADS_DIR, "photos");
-    fs.mkdirSync(dir, { recursive: true });
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "photo";
     const storedName = `${crypto.randomBytes(6).toString("hex")}-${safeName}`;
-    fs.writeFileSync(path.join(dir, storedName), Buffer.from(await file.arrayBuffer()));
+    const stored = await saveUpload(
+      Buffer.from(await file.arrayBuffer()),
+      `photos/${storedName}`,
+      file.type
+    );
 
-    const id = db
-      .prepare(
-        `INSERT INTO job_photos (job_id, stored_path, original_name, caption, stage, taken_at, uploaded_by)
-         VALUES (?, ?, ?, ?, ?, date('now'), ?)`
-      )
-      .run(jobId, `photos/${storedName}`, file.name, caption || null, stage, user.id).lastInsertRowid;
-    logActivity("photo", `Photo added to ${job.title}`);
+    const id = await run(
+      `INSERT INTO job_photos (job_id, stored_path, original_name, caption, stage, taken_at, uploaded_by)
+       VALUES ($1,$2,$3,$4,$5,to_char(now() at time zone 'utc','YYYY-MM-DD'),$6) RETURNING id`,
+      [jobId, stored, file.name, caption || null, stage, user.id]
+    );
+    await logActivity("photo", `Photo added to ${job.title}`);
     return Response.json({ id }, { status: 201 });
   } catch (err) {
     return permissionResponse(err) ?? Response.json({ error: "Upload failed" }, { status: 500 });

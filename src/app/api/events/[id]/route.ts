@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getDb, logActivity } from "@/lib/db";
+import { run, qOne, logActivity } from "@/lib/db";
 import { requirePermission, permissionResponse } from "@/lib/auth";
 
 type Params = { params: Promise<{ id: string }> };
@@ -15,9 +15,10 @@ export async function PATCH(req: Request, { params }: Params) {
   try {
     await requirePermission("manage_schedule");
     const { id } = await params;
-    const db = getDb();
-    const event = db.prepare("SELECT * FROM scheduled_events WHERE id = ?").get(Number(id)) as
-      | { id: number; name: string } | undefined;
+    const event = await qOne<{ id: number; name: string }>(
+      "SELECT id, name FROM scheduled_events WHERE id = $1",
+      [Number(id)]
+    );
     if (!event) return Response.json({ error: "Not found" }, { status: 404 });
     const parsed = patchSchema.safeParse(await req.json());
     if (!parsed.success) return Response.json({ error: "Validation failed" }, { status: 400 });
@@ -27,12 +28,16 @@ export async function PATCH(req: Request, { params }: Params) {
       if (d[key] !== undefined) fields[key] = d[key];
     }
     if (Object.keys(fields).length) {
-      const setSql = Object.keys(fields).map((k) => `${k} = ?`).join(", ");
-      db.prepare(`UPDATE scheduled_events SET ${setSql} WHERE id = ?`).run(...Object.values(fields), Number(id));
-      if (d.status === "done") logActivity("schedule", `${event.name} marked done`);
-      if (d.scheduled_for) logActivity("schedule", `${event.name} rescheduled to ${d.scheduled_for}`);
+      const keys = Object.keys(fields);
+      const setSql = keys.map((k, i) => `${k} = $${i + 1}`).join(", ");
+      await run(`UPDATE scheduled_events SET ${setSql} WHERE id = $${keys.length + 1}`, [
+        ...Object.values(fields),
+        Number(id),
+      ]);
+      if (d.status === "done") await logActivity("schedule", `${event.name} marked done`);
+      if (d.scheduled_for) await logActivity("schedule", `${event.name} rescheduled to ${d.scheduled_for}`);
     }
-    return Response.json(db.prepare("SELECT * FROM scheduled_events WHERE id = ?").get(Number(id)));
+    return Response.json(await qOne("SELECT * FROM scheduled_events WHERE id = $1", [Number(id)]));
   } catch (err) {
     return permissionResponse(err) ?? Response.json({ error: "Server error" }, { status: 500 });
   }

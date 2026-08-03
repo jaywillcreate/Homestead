@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod/v4";
-import { getDb } from "./db";
+import { q } from "./db";
 import type { Contractor } from "./types";
 
 /**
@@ -102,7 +102,7 @@ export async function parseInvoiceFile(
     const extraction = response.parsed_output;
     return {
       extraction,
-      matched_contractor_id: extraction.vendor ? matchContractor(extraction.vendor) : null,
+      matched_contractor_id: extraction.vendor ? await matchContractor(extraction.vendor) : null,
       error: null,
     };
   } catch (err) {
@@ -116,11 +116,10 @@ export async function parseInvoiceFile(
 }
 
 /** Fuzzy-match a parsed vendor string to a contractor in the book. */
-export function matchContractor(vendor: string): number | null {
-  const db = getDb();
-  const contractors = db
-    .prepare("SELECT id, business_name FROM contractors WHERE status != 'archived'")
-    .all() as Pick<Contractor, "id" | "business_name">[];
+export async function matchContractor(vendor: string): Promise<number | null> {
+  const contractors = await q<Pick<Contractor, "id" | "business_name">>(
+    "SELECT id, business_name FROM contractors WHERE status != 'archived'"
+  );
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
   const v = norm(vendor);
   if (!v) return null;

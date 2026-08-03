@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { getDb, logActivity } from "@/lib/db";
+import { run, qOne, logActivity } from "@/lib/db";
 import { requirePermission, permissionResponse } from "@/lib/auth";
+import { deleteUpload } from "@/lib/storage";
 import { getInvoice } from "@/lib/queries";
 
 type Params = { params: Promise<{ id: string }> };
@@ -32,7 +33,7 @@ export async function GET(_req: Request, { params }: Params) {
   try {
     await requirePermission("view_records");
     const { id } = await params;
-    const inv = getInvoice(Number(id));
+    const inv = await getInvoice(Number(id));
     if (!inv) return Response.json({ error: "Not found" }, { status: 404 });
     return Response.json(inv);
   } catch (err) {
@@ -44,8 +45,7 @@ export async function PATCH(req: Request, { params }: Params) {
   try {
     const user = await requirePermission("upload_invoices");
     const { id } = await params;
-    const db = getDb();
-    const existing = getInvoice(Number(id));
+    const existing = await getInvoice(Number(id));
     if (!existing) return Response.json({ error: "Not found" }, { status: 404 });
 
     const parsed = patchSchema.safeParse(await req.json());
@@ -62,40 +62,46 @@ export async function PATCH(req: Request, { params }: Params) {
       if (d[key] !== undefined) fields[key] = d[key];
     }
     if (Object.keys(fields).length) {
-      const setSql = Object.keys(fields).map((k) => `${k} = ?`).join(", ");
-      db.prepare(`UPDATE invoices SET ${setSql} WHERE id = ?`).run(...Object.values(fields), Number(id));
+      const keys = Object.keys(fields);
+      const setSql = keys.map((k, i) => `${k} = $${i + 1}`).join(", ");
+      await run(`UPDATE invoices SET ${setSql} WHERE id = $${keys.length + 1}`, [
+        ...Object.values(fields),
+        Number(id),
+      ]);
     }
 
     if (d.line_items) {
-      db.prepare("DELETE FROM invoice_line_items WHERE invoice_id = ?").run(Number(id));
-      const ins = db.prepare(
-        "INSERT INTO invoice_line_items (invoice_id, description, type, amount) VALUES (?, ?, ?, ?)"
-      );
-      for (const li of d.line_items) ins.run(Number(id), li.description, li.type, li.amount);
+      await run("DELETE FROM invoice_line_items WHERE invoice_id = $1", [Number(id)]);
+      for (const li of d.line_items) {
+        await run(
+          "INSERT INTO invoice_line_items (invoice_id, description, type, amount) VALUES ($1,$2,$3,$4) RETURNING id",
+          [Number(id), li.description, li.type, li.amount]
+        );
+      }
     }
 
     if (d.action === "confirm") {
-      const inv = getInvoice(Number(id))!;
+      const inv = (await getInvoice(Number(id)))!;
       let jobId = inv.job_id;
       if (!jobId && inv.contractor_id) {
-        jobId = db
-          .prepare(
-            `INSERT INTO jobs (property_id, contractor_id, title, trade, performed_on, status, amount, planned)
-             VALUES ((SELECT id FROM properties LIMIT 1), ?, ?, ?, ?, 'done', ?, 0)`
-          )
-          .run(
+        jobId = await run(
+          `INSERT INTO jobs (property_id, contractor_id, title, trade, performed_on, status, amount, planned)
+           VALUES ((SELECT id FROM properties LIMIT 1), $1, $2, $3, $4, 'done', $5, 0) RETURNING id`,
+          [
             inv.contractor_id,
             `Invoice ${inv.invoice_number ?? inv.id}`,
-            inv.category, inv.invoice_date, inv.total
-          ).lastInsertRowid as number;
+            inv.category, inv.invoice_date, inv.total,
+          ]
+        );
       }
-      db.prepare(
-        "UPDATE invoices SET status = 'filed', confirmed_by = ?, job_id = COALESCE(job_id, ?) WHERE id = ?"
-      ).run(user.id, jobId, Number(id));
-      logActivity("invoice", `Invoice ${inv.invoice_number ?? inv.id} confirmed & filed by ${user.name}`);
+      await run(
+        "UPDATE invoices SET status = 'filed', confirmed_by = $1, job_id = COALESCE(job_id, $2) WHERE id = $3",
+        [user.id, jobId, Number(id)]
+      );
+      await logActivity("invoice", `Invoice ${inv.invoice_number ?? inv.id} confirmed & filed by ${user.name}`);
     }
 
-    return Response.json(getInvoice(Number(id)));
+    return Response.json(await getInvoice(Number(id)));
   } catch (err) {
     return permissionResponse(err) ?? Response.json({ error: "Server error" }, { status: 500 });
   }
@@ -105,7 +111,12 @@ export async function DELETE(_req: Request, { params }: Params) {
   try {
     await requirePermission("upload_invoices");
     const { id } = await params;
-    getDb().prepare("DELETE FROM invoices WHERE id = ?").run(Number(id));
+    const inv = await qOne<{ source_file: string | null }>(
+      "SELECT source_file FROM invoices WHERE id = $1",
+      [Number(id)]
+    );
+    await run("DELETE FROM invoices WHERE id = $1", [Number(id)]);
+    await deleteUpload(inv?.source_file);
     return Response.json({ ok: true });
   } catch (err) {
     return permissionResponse(err) ?? Response.json({ error: "Server error" }, { status: 500 });

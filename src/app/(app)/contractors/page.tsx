@@ -18,7 +18,7 @@ export default async function DirectoryPage({
   const { trade = "All trades", q } = await searchParams;
   const user = await getCurrentUser();
   const canEdit = user ? can(user.role as Role, "edit_contractors") : false;
-  let contractors = listContractors(trade);
+  let contractors = await listContractors(trade);
   if (q) {
     const needle = q.toLowerCase();
     contractors = contractors.filter(

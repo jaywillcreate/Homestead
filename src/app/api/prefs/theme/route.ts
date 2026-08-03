@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db";
+import { run } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { z } from "zod";
 
@@ -20,8 +20,9 @@ export async function PUT(req: Request) {
   if (!user) return Response.json({ error: "Not signed in" }, { status: 401 });
   const parsed = schema.safeParse(await req.json());
   if (!parsed.success) return Response.json({ error: "Invalid theme prefs" }, { status: 400 });
-  getDb()
-    .prepare("UPDATE users SET theme_prefs = ? WHERE id = ?")
-    .run(JSON.stringify(parsed.data), user.id);
+  await run("UPDATE users SET theme_prefs = $1 WHERE id = $2", [
+    JSON.stringify(parsed.data),
+    user.id,
+  ]);
   return Response.json({ ok: true });
 }

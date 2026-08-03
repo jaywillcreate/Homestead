@@ -9,11 +9,6 @@ export const dynamic = "force-dynamic";
 export default async function PhotosPage() {
   const user = await getCurrentUser();
   const canUpload = user ? can(user.role as Role, "upload_photos") : false;
-  return (
-    <PhotoGallery
-      jobs={JSON.parse(JSON.stringify(listJobsWithPhotos()))}
-      allJobs={JSON.parse(JSON.stringify(listJobs()))}
-      canUpload={canUpload}
-    />
-  );
+  const [jobs, allJobs] = await Promise.all([listJobsWithPhotos(), listJobs()]);
+  return <PhotoGallery jobs={jobs} allJobs={allJobs} canUpload={canUpload} />;
 }

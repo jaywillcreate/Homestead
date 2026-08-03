@@ -9,7 +9,5 @@ export const dynamic = "force-dynamic";
 export default async function DiscoverPage() {
   const user = await getCurrentUser();
   const canBid = user ? can(user.role as Role, "manage_bids") : false;
-  return (
-    <DiscoverView request={JSON.parse(JSON.stringify(openBidRequest()))} canBid={canBid} />
-  );
+  return <DiscoverView request={await openBidRequest()} canBid={canBid} />;
 }

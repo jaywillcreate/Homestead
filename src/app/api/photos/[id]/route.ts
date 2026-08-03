@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { getDb } from "@/lib/db";
+import { run, qOne } from "@/lib/db";
 import { requirePermission, permissionResponse } from "@/lib/auth";
+import { deleteUpload } from "@/lib/storage";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -15,11 +16,10 @@ export async function PATCH(req: Request, { params }: Params) {
     const { id } = await params;
     const parsed = patchSchema.safeParse(await req.json());
     if (!parsed.success) return Response.json({ error: "Validation failed" }, { status: 400 });
-    const db = getDb();
     if (parsed.data.caption !== undefined)
-      db.prepare("UPDATE job_photos SET caption = ? WHERE id = ?").run(parsed.data.caption, Number(id));
+      await run("UPDATE job_photos SET caption = $1 WHERE id = $2", [parsed.data.caption, Number(id)]);
     if (parsed.data.stage)
-      db.prepare("UPDATE job_photos SET stage = ? WHERE id = ?").run(parsed.data.stage, Number(id));
+      await run("UPDATE job_photos SET stage = $1 WHERE id = $2", [parsed.data.stage, Number(id)]);
     return Response.json({ ok: true });
   } catch (err) {
     return permissionResponse(err) ?? Response.json({ error: "Server error" }, { status: 500 });
@@ -30,7 +30,12 @@ export async function DELETE(_req: Request, { params }: Params) {
   try {
     await requirePermission("upload_photos");
     const { id } = await params;
-    getDb().prepare("DELETE FROM job_photos WHERE id = ?").run(Number(id));
+    const photo = await qOne<{ stored_path: string }>(
+      "SELECT stored_path FROM job_photos WHERE id = $1",
+      [Number(id)]
+    );
+    await run("DELETE FROM job_photos WHERE id = $1", [Number(id)]);
+    await deleteUpload(photo?.stored_path);
     return Response.json({ ok: true });
   } catch (err) {
     return permissionResponse(err) ?? Response.json({ error: "Server error" }, { status: 500 });

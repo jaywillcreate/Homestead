@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { UploadSimple, ImageSquare } from "@phosphor-icons/react";
-import { shortDate } from "@/lib/format";
+import { shortDate, fileHref } from "@/lib/format";
 import type { Job, JobPhoto } from "@/lib/types";
 
 type JobWithPhotos = Job & {
@@ -109,7 +109,7 @@ export function PhotoGallery({
               <figure className="card photo-tile" key={p.id} style={{ margin: 0 }}>
                 <div className="photo-area">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={`/api/files/${p.stored_path}`} alt={p.caption ?? "Job photo"} loading="lazy" />
+                  <img src={fileHref(p.stored_path)} alt={p.caption ?? "Job photo"} loading="lazy" />
                 </div>
                 <figcaption style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
                   <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

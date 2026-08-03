@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
-import { getDb } from "@/lib/db";
-import { getCurrentUser, createSession, SESSION_COOKIE } from "@/lib/auth";
 import { cookies } from "next/headers";
+import { q } from "@/lib/db";
+import { getCurrentUser, createSession, SESSION_COOKIE } from "@/lib/auth";
 import type { User } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -10,18 +10,23 @@ async function signIn(formData: FormData) {
   "use server";
   const userId = Number(formData.get("userId"));
   if (!userId) return;
-  const token = createSession(userId);
+  const token = await createSession(userId);
   const jar = await cookies();
-  jar.set(SESSION_COOKIE, token, { httpOnly: true, sameSite: "lax", path: "/" });
+  jar.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: process.env.NODE_ENV === "production",
+  });
   redirect("/");
 }
 
 export default async function LoginPage() {
   const current = await getCurrentUser();
   if (current) redirect("/");
-  const users = getDb()
-    .prepare("SELECT * FROM users ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 ELSE 2 END")
-    .all() as User[];
+  const users = await q<User>(
+    "SELECT * FROM users ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 ELSE 2 END"
+  );
 
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}>
@@ -35,6 +40,12 @@ export default async function LoginPage() {
           </p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+          {users.length === 0 && (
+            <p className="card-body">
+              No users yet — run <code>npm run db:seed</code> against this database to create the
+              household profiles and demo data.
+            </p>
+          )}
           {users.map((u) => (
             <form action={signIn} key={u.id}>
               <input type="hidden" name="userId" value={u.id} />

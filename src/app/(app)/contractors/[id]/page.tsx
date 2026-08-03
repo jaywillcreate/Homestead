@@ -17,10 +17,10 @@ function fmtSize(bytes: number) {
 
 export default async function ContractorProfile({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const c = getContractor(Number(id));
+  const c = await getContractor(Number(id));
   if (!c) notFound();
-  const jobs = contractorJobs(c.id);
-  const docs = contractorDocuments(c.id);
+  const jobs = await contractorJobs(c.id);
+  const docs = await contractorDocuments(c.id);
   const user = await getCurrentUser();
   const canEdit = user ? can(user.role as Role, "edit_contractors") : false;
 

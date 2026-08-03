@@ -8,12 +8,16 @@ const createSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   vendor_name: z.string().trim().min(1).max(200),
   meta: z.string().max(200).nullable().optional(),
+  price: z.coerce.number().min(0).nullable().optional(),
+  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   rating: z.number().nullable().optional(),
   review_count: z.number().int().nullable().optional(),
   review_excerpt: z.string().max(300).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+  favorable: z.union([z.literal(0), z.literal(1)]).nullable().optional(),
 });
 
-/** POST → invite a discovered local pro to bid (adds it to the bids section). */
+/** POST → add a bid: invite a discovered pro, or enter one manually. */
 export async function POST(req: Request) {
   try {
     await requirePermission("manage_bids");
@@ -58,12 +62,28 @@ export async function POST(req: Request) {
       return Response.json({ error: `${d.vendor_name} is already in this request` }, { status: 409 });
     }
 
-    const bidId = await run(
-      `INSERT INTO bids (bid_request_id, vendor_name, meta, rating, review_count, review_excerpt, badge, status)
-       VALUES ($1,$2,$3,$4,$5,$6,'Awaiting bid','awaiting') RETURNING id`,
-      [request.id, d.vendor_name, d.meta ?? null, d.rating ?? null, d.review_count ?? null, d.review_excerpt ?? null]
+    // A known contractor entered manually links to the book automatically.
+    const known = await qOne<{ id: number }>(
+      "SELECT id FROM contractors WHERE lower(business_name) = lower($1) AND status != 'archived'",
+      [d.vendor_name]
     );
-    await logActivity("bid", `${d.vendor_name} invited to bid on "${request.title}"`);
+
+    const hasPrice = d.price != null;
+    const bidId = await run(
+      `INSERT INTO bids (bid_request_id, contractor_id, vendor_name, meta, price, start_date,
+         rating, review_count, review_excerpt, badge, status, notes, favorable)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+      [
+        request.id, known?.id ?? null, d.vendor_name,
+        d.meta ?? (known ? "Known contractor" : "Added manually"),
+        d.price ?? null, d.start_date ?? null,
+        d.rating ?? null, d.review_count ?? null, d.review_excerpt ?? null,
+        known ? "In your book" : hasPrice ? null : "Awaiting bid",
+        hasPrice ? "received" : "awaiting",
+        d.notes ?? null, d.favorable ?? null,
+      ]
+    );
+    await logActivity("bid", `${d.vendor_name} added to bids on "${request.title}"`);
     return Response.json({ id: bidId, bid_request_id: request.id }, { status: 201 });
   } catch (err) {
     return permissionResponse(err) ?? Response.json({ error: "Server error" }, { status: 500 });

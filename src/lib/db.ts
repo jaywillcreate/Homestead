@@ -202,6 +202,10 @@ CREATE INDEX IF NOT EXISTS idx_jobs_contractor ON jobs(contractor_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_contractor ON invoices(contractor_id);
 CREATE INDEX IF NOT EXISTS idx_photos_job ON job_photos(job_id);
 CREATE INDEX IF NOT EXISTS idx_events_date ON scheduled_events(scheduled_for);
+
+-- In-place migrations for databases created before these columns existed.
+ALTER TABLE bids ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE bids ADD COLUMN IF NOT EXISTS favorable INTEGER;
 `;
 
 function getPool(): Pool {

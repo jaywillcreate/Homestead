@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  MagnifyingGlass, ChatCircle, MapPin, X, Star, CalendarPlus, PlusCircle, ClockCounterClockwise,
+  MagnifyingGlass, ChatCircle, MapPin, X, Star, CalendarPlus, PlusCircle,
+  ClockCounterClockwise, ThumbsUp, ThumbsDown, NotePencil, Trash, Plus,
 } from "@phosphor-icons/react";
 import { money, shortDate, initials } from "@/lib/format";
 import type { Bid, BidRequest } from "@/lib/types";
@@ -18,6 +19,38 @@ function badgeTag(badge: string | null) {
   if (badge === "Top rated") return <span className="tag tag-accent-2">Top rated</span>;
   if (badge === "In your book") return <span className="tag tag-accent">In your book</span>;
   return <span className="tag tag-outline">{badge}</span>;
+}
+
+function favorableTag(favorable: number | null) {
+  if (favorable === 1)
+    return <span className="tag tag-accent"><ThumbsUp size={11} /> Favorable</span>;
+  if (favorable === 0)
+    return <span className="tag tag-warn"><ThumbsDown size={11} /> Not favorable</span>;
+  return null;
+}
+
+function FavorableSeg({
+  value, onChange,
+}: {
+  value: 0 | 1 | null;
+  onChange: (v: 0 | 1 | null) => void;
+}) {
+  return (
+    <div className="seg" role="group" aria-label="Favorability">
+      <button type="button" className="seg-opt" aria-pressed={value === 1}
+        onClick={() => onChange(value === 1 ? null : 1)}>
+        <ThumbsUp size={13} /> Favorable
+      </button>
+      <button type="button" className="seg-opt" aria-pressed={value === null}
+        onClick={() => onChange(null)}>
+        Undecided
+      </button>
+      <button type="button" className="seg-opt" aria-pressed={value === 0}
+        onClick={() => onChange(value === 0 ? null : 0)}>
+        <ThumbsDown size={13} /> Not favorable
+      </button>
+    </div>
+  );
 }
 
 export function DiscoverView({
@@ -37,10 +70,14 @@ export function DiscoverView({
   const [source, setSource] = useState<string>("");
   const [location, setLocation] = useState<ZipLocation | null>(null);
   const [selected, setSelected] = useState<LocalPro | null>(null);
+  const [proNotes, setProNotes] = useState("");
+  const [proFavorable, setProFavorable] = useState<0 | 1 | null>(null);
   const [newJobTitle, setNewJobTitle] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [scheduleBid, setScheduleBid] = useState<Bid | null>(null);
+  const [editBid, setEditBid] = useState<Bid | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -90,6 +127,13 @@ export function DiscoverView({
     }
   }
 
+  function selectPro(pro: LocalPro | null) {
+    setSelected(pro);
+    setProNotes("");
+    setProFavorable(null);
+    setAddError(null);
+  }
+
   async function addToBids(pro: LocalPro) {
     setAddError(null);
     setAdding(true);
@@ -105,6 +149,8 @@ export function DiscoverView({
           rating: pro.rating,
           review_count: pro.review_count,
           review_excerpt: pro.review_excerpt,
+          notes: proNotes.trim() || null,
+          favorable: proFavorable,
         }),
       });
       const body = await res.json();
@@ -112,8 +158,8 @@ export function DiscoverView({
         setAddError(body.error ?? "Could not add to bids");
         return;
       }
-      showToast(`${pro.name} added to bids — awaiting their quote.`);
-      setSelected(null);
+      showToast(`${pro.name} added to bids.`);
+      selectPro(null);
       setNewJobTitle("");
       router.refresh();
     } finally {
@@ -151,7 +197,9 @@ export function DiscoverView({
             </div>
             {canBid && (
               <div style={{ display: "flex", gap: "var(--space-2)" }}>
-                <button className="btn btn-secondary">Edit scope</button>
+                <button className="btn btn-secondary" onClick={() => setManualOpen(true)}>
+                  <Plus size={15} /> Add bid
+                </button>
                 <button className="btn btn-primary">Request more bids</button>
               </div>
             )}
@@ -165,8 +213,14 @@ export function DiscoverView({
             const vsAvg = bid.price != null && avg ? Math.round(((bid.price - avg) / avg) * 100) : null;
             const known = bid.badge === "In your book";
             return (
-              <div key={bid.id} className="card"
-                style={{ boxShadow: known ? "0 0 0 1px var(--color-accent), var(--shadow-sm)" : undefined }}>
+              <div
+                key={bid.id}
+                className={`card${canBid ? " card-link" : ""}`}
+                style={{ boxShadow: known ? "0 0 0 1px var(--color-accent), var(--shadow-sm)" : undefined }}
+                onClick={canBid ? () => setEditBid(bid) : undefined}
+                role={canBid ? "button" : undefined}
+                title={canBid ? "Open bid details & notes" : undefined}
+              >
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                   <span className="avatar" style={{ width: 38, height: 38, fontSize: 13 }}>{initials(bid.vendor_name)}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -188,14 +242,26 @@ export function DiscoverView({
                   <div className="text-muted" style={{ fontSize: 13 }}>Awaiting bid…</div>
                 )}
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {favorableTag(bid.favorable)}
                   {bid.rating != null && <span className="tag tag-outline num">★ {bid.rating.toFixed(1)}</span>}
                   {bid.review_count != null && <span className="tag tag-outline num">{bid.review_count} reviews</span>}
                   {bid.start_date && <span className="tag tag-outline">Start {shortDate(bid.start_date)}</span>}
                 </div>
-                {bid.review_excerpt && (
+                {bid.notes && (
+                  <p className="card-body" style={{ margin: 0, display: "flex", gap: 6, alignItems: "flex-start" }}>
+                    <NotePencil size={13} style={{ marginTop: 2, flex: "none", color: "var(--color-accent-text)" }} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                      {bid.notes}
+                    </span>
+                  </p>
+                )}
+                {!bid.notes && bid.review_excerpt && (
                   <p className="card-body" style={{ fontStyle: "italic", margin: 0 }}>{bid.review_excerpt}</p>
                 )}
-                <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "auto", paddingTop: "var(--space-2)", flexWrap: "wrap" }}>
+                <div
+                  style={{ display: "flex", gap: "var(--space-2)", marginTop: "auto", paddingTop: "var(--space-2)", flexWrap: "wrap" }}
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {bid.status === "accepted" ? (
                     <span className="tag tag-accent">Accepted</span>
                   ) : bid.status === "declined" ? (
@@ -223,8 +289,8 @@ export function DiscoverView({
       <div className="card">
         <div className="card-title">Find more local pros</div>
         <p className="card-body" style={{ margin: 0 }}>
-          Search nearby contractors with ratings and reviews, then click a result to review it and
-          invite it to bid.
+          Search nearby contractors with ratings and reviews, then click a result to review it,
+          note why it caught your eye, and invite it to bid.
         </p>
         <form
           style={{ display: "flex", gap: "var(--space-2)", maxWidth: 620, flexWrap: "wrap" }}
@@ -276,7 +342,7 @@ export function DiscoverView({
                         textAlign: "left", font: "inherit", border: "none",
                         boxShadow: isSelected ? "0 0 0 1.5px var(--color-accent), var(--shadow-md)" : undefined,
                       }}
-                      onClick={() => { setSelected(isSelected ? null : p); setAddError(null); }}
+                      onClick={() => selectPro(isSelected ? null : p)}
                     >
                       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                         <span className="avatar" style={{ width: 38, height: 38, fontSize: 13 }}>{initials(p.name)}</span>
@@ -311,7 +377,7 @@ export function DiscoverView({
                       </div>
                     </div>
                     <button className="btn btn-icon" style={{ width: 30, height: 30, minHeight: 30 }}
-                      onClick={() => setSelected(null)} aria-label="Close">
+                      onClick={() => selectPro(null)} aria-label="Close">
                       <X size={14} />
                     </button>
                   </div>
@@ -335,6 +401,13 @@ export function DiscoverView({
                   )}
                   {canBid && (
                     <>
+                      <div className="field">
+                        <label>Notes — why this pro?</label>
+                        <textarea className="input" style={{ minHeight: 64 }}
+                          value={proNotes} onChange={(e) => setProNotes(e.target.value)}
+                          placeholder="e.g. Top-rated nearby, neighbor recommended, good storm-repair reviews" />
+                      </div>
+                      <FavorableSeg value={proFavorable} onChange={setProFavorable} />
                       {!requestOpen && (
                         <div className="field">
                           <label>Job title for the new bid request</label>
@@ -402,6 +475,20 @@ export function DiscoverView({
         </div>
       )}
 
+      {editBid && (
+        <BidDetailsDialog
+          bid={editBid}
+          onClose={() => setEditBid(null)}
+          onDone={(msg) => { setEditBid(null); showToast(msg); router.refresh(); }}
+        />
+      )}
+      {manualOpen && (
+        <ManualBidDialog
+          requestOpen={Boolean(requestOpen)}
+          onClose={() => setManualOpen(false)}
+          onDone={(msg) => { setManualOpen(false); showToast(msg); router.refresh(); }}
+        />
+      )}
       {scheduleBid && (
         <ScheduleBidDialog
           bid={scheduleBid}
@@ -414,6 +501,221 @@ export function DiscoverView({
     </>
   );
 }
+
+/* ————— Bid details: notes, favorability, edits, removal ————— */
+
+function BidDetailsDialog({
+  bid, onClose, onDone,
+}: {
+  bid: Bid;
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
+  const [notes, setNotes] = useState(bid.notes ?? "");
+  const [favorable, setFavorable] = useState<0 | 1 | null>(
+    bid.favorable === 1 ? 1 : bid.favorable === 0 ? 0 : null
+  );
+  const [price, setPrice] = useState(bid.price != null ? String(bid.price) : "");
+  const [startDate, setStartDate] = useState(bid.start_date ?? "");
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/bids/${bid.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notes: notes.trim() || null,
+          favorable,
+          price: price === "" ? null : Number(price),
+          start_date: startDate || null,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        setError(body.error ?? "Save failed");
+        return;
+      }
+      onDone(`${bid.vendor_name} updated.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/bids/${bid.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json();
+        setError(body.error ?? "Remove failed");
+        return;
+      }
+      onDone(`${bid.vendor_name} removed from bids.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="dialog" role="dialog" aria-label="Bid details">
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="avatar" style={{ width: 38, height: 38, fontSize: 13 }}>{initials(bid.vendor_name)}</span>
+          <div style={{ flex: 1 }}>
+            <div className="dialog-title" style={{ fontSize: 20 }}>{bid.vendor_name}</div>
+            <div className="text-muted" style={{ fontSize: 11 }}>{bid.meta}</div>
+          </div>
+          {badgeTag(bid.badge)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+          <div className="field">
+            <label>Bid price ($)</label>
+            <input className="input num" type="number" min={0} step="0.01" value={price}
+              onChange={(e) => setPrice(e.target.value)} placeholder="Awaiting" />
+          </div>
+          <div className="field">
+            <label>Proposed start</label>
+            <input className="input" type="date" value={startDate}
+              onChange={(e) => setStartDate(e.target.value)} />
+          </div>
+        </div>
+        <div className="field">
+          <label>Notes — why they were called or searched</label>
+          <textarea className="input" style={{ minHeight: 80 }}
+            value={notes} onChange={(e) => setNotes(e.target.value)}
+            placeholder="e.g. Referred by neighbor; called for storm damage quote; sounded booked until fall" />
+        </div>
+        <FavorableSeg value={favorable} onChange={setFavorable} />
+        {error && <div className="field-error">{error}</div>}
+        <div className="dialog-actions" style={{ justifyContent: "space-between" }}>
+          {confirmRemove ? (
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ fontSize: 12.5 }}>Remove this bid?</span>
+              <button className="btn btn-danger" disabled={busy} onClick={remove}>
+                <Trash size={14} /> Remove
+              </button>
+              <button className="btn btn-ghost" onClick={() => setConfirmRemove(false)}>Keep</button>
+            </div>
+          ) : (
+            <button className="btn btn-danger" onClick={() => setConfirmRemove(true)}>
+              <Trash size={14} /> Remove bid
+            </button>
+          )}
+          <div style={{ display: "flex", gap: "var(--space-2)" }}>
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled={busy} onClick={save}>
+              {busy ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ————— Manual bid entry ————— */
+
+function ManualBidDialog({
+  requestOpen, onClose, onDone,
+}: {
+  requestOpen: boolean;
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
+  const [vendor, setVendor] = useState("");
+  const [price, setPrice] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [favorable, setFavorable] = useState<0 | 1 | null>(null);
+  const [title, setTitle] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch("/api/bids", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vendor_name: vendor.trim(),
+          price: price === "" ? null : Number(price),
+          start_date: startDate || null,
+          notes: notes.trim() || null,
+          favorable,
+          ...(title.trim() ? { title: title.trim() } : {}),
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error ?? "Could not add bid");
+        return;
+      }
+      onDone(`${vendor.trim()} added to bids.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="dialog" role="dialog" aria-label="Add bid manually">
+        <div className="dialog-title">Add bid</div>
+        <p className="card-body" style={{ margin: 0 }}>
+          Enter a quote you collected by phone, text, or in person. Known contractors link to your
+          book automatically.
+        </p>
+        <div className="field">
+          <label>Contractor / company name</label>
+          <input className="input" value={vendor} onChange={(e) => setVendor(e.target.value)}
+            placeholder="e.g. Mesa Verde Fence & Gate" autoFocus />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+          <div className="field">
+            <label>Bid price ($, optional)</label>
+            <input className="input num" type="number" min={0} step="0.01" value={price}
+              onChange={(e) => setPrice(e.target.value)} placeholder="Awaiting quote" />
+          </div>
+          <div className="field">
+            <label>Proposed start (optional)</label>
+            <input className="input" type="date" value={startDate}
+              onChange={(e) => setStartDate(e.target.value)} />
+          </div>
+        </div>
+        <div className="field">
+          <label>Notes — why they were called</label>
+          <textarea className="input" style={{ minHeight: 64 }}
+            value={notes} onChange={(e) => setNotes(e.target.value)}
+            placeholder="e.g. Did the neighbor's fence last spring; quoted over the phone" />
+        </div>
+        <FavorableSeg value={favorable} onChange={setFavorable} />
+        {!requestOpen && (
+          <div className="field">
+            <label>Job title for the new bid request</label>
+            <input className="input" value={title} onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Fence replacement" />
+          </div>
+        )}
+        {error && <div className="field-error">{error}</div>}
+        <div className="dialog-actions">
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary"
+            disabled={busy || !vendor.trim() || (!requestOpen && !title.trim())} onClick={save}>
+            {busy ? "Adding…" : "Add bid"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ————— Add a bid to the schedule ————— */
 
 function ScheduleBidDialog({
   bid, requestTitle, onClose, onDone,

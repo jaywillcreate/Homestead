@@ -147,6 +147,10 @@ export interface Bid {
   review_excerpt: string | null;
   badge: string | null;
   status: "received" | "awaiting" | "accepted" | "declined";
+  /** Why this pro was called or searched. */
+  notes: string | null;
+  /** 1 favorable, 0 not favorable, null undecided. */
+  favorable: number | null;
 }
 
 export const TRADES = [

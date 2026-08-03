@@ -243,6 +243,10 @@ async function main() {
   await bid([null, "Heritage Fence & Deck", "New · 3.2 mi away", 7420, "2026-08-12", 4.9, 388, "“Premium work — the board-on-board detail is flawless.”", "Top rated", "received"]);
   await bid([null, "Alamo Outdoor Builds", "New · 5.0 mi away", 6510, "2026-08-31", 4.3, 97, "“Solid value, communication could be quicker.”", null, "received"]);
   await bid([null, "Cedar & Post Co.", "Invited · quote pending", null, null, null, null, null, "Awaiting bid", "awaiting"]);
+  await run(
+    `UPDATE bids SET favorable = 1, notes = 'Known crew — did our punch list last spring; showed up on time every day'
+     WHERE vendor_name = 'Halvorsen Builders'`
+  );
 
   // ------------------------------------------------------------- activity
   const act = (kind: string, message: string, offset: string) =>

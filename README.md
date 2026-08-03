@@ -79,17 +79,37 @@ labeled sample data so the flow is demonstrable.
 
 ## Deploying
 
-The app is self-contained (SQLite + local uploads), so it deploys anywhere Node runs:
+### Vercel (planned target)
 
-1. `npm run build && npm run start` on a Mac mini / home server / Raspberry Pi-class box.
-2. Keep `storage/` on persistent disk — it holds the database and every uploaded file
-   (back this folder up; it is the entire application state).
-3. Put it behind Tailscale, a VPN, or a reverse proxy with HTTPS if you want access away
-   from home. The profile-picker sign-in is designed for a trusted household network —
-   add a real identity layer (e.g. next-auth) before exposing it to the open internet.
-4. Serverless hosts (Vercel/Netlify) are **not** a fit as-is: they lack persistent disk
-   for SQLite/uploads. If you want cloud hosting later, swap `src/lib/db.ts` for Postgres
-   (e.g. Neon) and `storage/uploads` for S3/R2 — both are isolated behind small modules.
+Connecting the GitHub repo to Vercel is zero-config for the build — `next build` passes
+as-is (verified). **But two pieces of this app assume a persistent disk, which Vercel's
+serverless runtime does not have:**
+
+| Local piece | Why it breaks on Vercel | Serverless replacement |
+| --- | --- | --- |
+| SQLite at `storage/homestead.db` | Serverless filesystems are read-only/ephemeral — data written during a request vanishes | Postgres (Neon via Vercel Marketplace) — swap `src/lib/db.ts` + `src/lib/queries.ts` |
+| Uploads in `storage/uploads/` | Same — uploaded scans/photos disappear between invocations | Vercel Blob or S3/R2 — swap the write paths in the upload routes + `/api/files` |
+
+Both are deliberately isolated behind small modules, so the migration is contained.
+Until that swap is done, treat a Vercel deployment as a **preview of the UI only** —
+records created there will not persist.
+
+Vercel setup once the repo is on GitHub:
+
+1. vercel.com → Add New Project → Import the `homestead` repo (framework auto-detects
+   Next.js; no build settings needed).
+2. Add environment variables as desired: `ANTHROPIC_API_KEY` (AI invoice parsing),
+   `GOOGLE_PLACES_API_KEY` (live local-pro search).
+3. Every push to `main` auto-deploys; pull requests get preview deployments.
+
+Also note the profile-picker sign-in is designed for a trusted household — add a real
+identity layer (e.g. next-auth with Google sign-in) before sharing a public URL.
+
+### Self-hosted (works today, zero changes)
+
+`npm run build && npm run start` on any box with Node — Mac mini, home server, Raspberry
+Pi-class hardware. Keep `storage/` on persistent disk and back it up (it is the entire
+application state). Put it behind Tailscale or a VPN for access away from home.
 
 ## Project layout
 

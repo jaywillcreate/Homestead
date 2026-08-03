@@ -224,8 +224,8 @@ async function main() {
 
   // ---------------------------------------------------------------- bids
   const reqId = (await run(
-    `INSERT INTO bid_requests (property_id, title, scope, posted_at, closes_at, status)
-     VALUES ($1,$2,$3,'2026-07-28','2026-08-05','open') RETURNING id`,
+    `INSERT INTO bid_requests (property_id, title, scope, category, priority, budget, posted_at, closes_at, status)
+     VALUES ($1,$2,$3,'Outdoor & landscaping','high',7000,'2026-07-28','2026-08-05','open') RETURNING id`,
     [
       propId,
       "Replace cedar privacy fence — 120 linear ft",

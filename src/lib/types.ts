@@ -132,6 +132,11 @@ export interface BidRequest {
   posted_at: string;
   closes_at: string | null;
   status: "open" | "closed" | "accepted";
+  /** Trade category, e.g. "Plumbing", "Outdoor & landscaping". */
+  category: string | null;
+  priority: "low" | "normal" | "high" | null;
+  /** Target budget for the job, if set. */
+  budget: number | null;
 }
 
 export interface Bid {

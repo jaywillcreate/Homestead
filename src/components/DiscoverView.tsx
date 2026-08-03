@@ -1,17 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   MagnifyingGlass, ChatCircle, MapPin, X, Star, CalendarPlus, PlusCircle,
   ClockCounterClockwise, ThumbsUp, ThumbsDown, NotePencil, Trash, Plus,
+  PencilSimple, CaretLeft, CaretRight, ListBullets,
 } from "@phosphor-icons/react";
 import { money, shortDate, initials } from "@/lib/format";
-import type { Bid, BidRequest } from "@/lib/types";
+import { TRADES, type Bid, type BidRequest } from "@/lib/types";
 import type { LocalPro, ZipLocation } from "@/lib/discovery";
 
-type Request = (BidRequest & { bids: Bid[] }) | null;
-type HistoryEntry = BidRequest & { bids: Bid[] };
+type RequestEntry = BidRequest & { bids: Bid[] };
+
+/* ————— small shared pieces ————— */
 
 function badgeTag(badge: string | null) {
   if (!badge) return null;
@@ -27,6 +29,25 @@ function favorableTag(favorable: number | null) {
   if (favorable === 0)
     return <span className="tag tag-warn"><ThumbsDown size={11} /> Not favorable</span>;
   return null;
+}
+
+function bidStatusTag(status: Bid["status"]) {
+  if (status === "accepted") return <span className="tag tag-accent">Accepted</span>;
+  if (status === "declined") return <span className="tag tag-neutral">Declined</span>;
+  if (status === "received") return <span className="tag tag-accent-2">Received</span>;
+  return <span className="tag tag-outline">Awaiting</span>;
+}
+
+function priorityTag(priority: BidRequest["priority"]) {
+  if (priority === "high") return <span className="tag tag-warn">High priority</span>;
+  if (priority === "low") return <span className="tag tag-neutral">Low priority</span>;
+  return null;
+}
+
+function requestStatusTag(status: BidRequest["status"]) {
+  if (status === "open") return <span className="tag tag-outline">Open</span>;
+  if (status === "accepted") return <span className="tag tag-accent">Accepted</span>;
+  return <span className="tag tag-neutral">Closed</span>;
 }
 
 function FavorableSeg({
@@ -53,15 +74,47 @@ function FavorableSeg({
   );
 }
 
-export function DiscoverView({
-  request, history, canBid, canSchedule,
+/** Dropdown of open requests, with an optional "start new" entry. */
+function RequestSelect({
+  openRequests, value, onChange, allowNew,
 }: {
-  request: Request;
-  history: HistoryEntry[];
+  openRequests: RequestEntry[];
+  value: number | "new";
+  onChange: (v: number | "new") => void;
+  allowNew: boolean;
+}) {
+  return (
+    <div className="field">
+      <label>Attach to request</label>
+      <select
+        className="input"
+        value={String(value)}
+        onChange={(e) => onChange(e.target.value === "new" ? "new" : Number(e.target.value))}
+      >
+        {openRequests.map((r) => (
+          <option key={r.id} value={r.id}>{r.title}</option>
+        ))}
+        {allowNew && <option value="new">+ Start a new request…</option>}
+      </select>
+    </div>
+  );
+}
+
+/* ————— main view ————— */
+
+export function DiscoverView({
+  requests, canBid, canSchedule,
+}: {
+  requests: RequestEntry[];
   canBid: boolean;
   canSchedule: boolean;
 }) {
   const router = useRouter();
+  const openRequests = useMemo(() => requests.filter((r) => r.status === "open"), [requests]);
+  const defaultFeatured = openRequests[0]?.id ?? requests[0]?.id ?? null;
+  const [featuredId, setFeaturedId] = useState<number | null>(defaultFeatured);
+  const featured = requests.find((r) => r.id === featuredId) ?? requests[0] ?? null;
+
   const [query, setQuery] = useState("");
   const [zip, setZip] = useState("");
   const [zipError, setZipError] = useState<string | null>(null);
@@ -72,12 +125,14 @@ export function DiscoverView({
   const [selected, setSelected] = useState<LocalPro | null>(null);
   const [proNotes, setProNotes] = useState("");
   const [proFavorable, setProFavorable] = useState<0 | 1 | null>(null);
+  const [proTarget, setProTarget] = useState<number | "new">(featured?.status === "open" ? featured.id : "new");
   const [newJobTitle, setNewJobTitle] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [scheduleBid, setScheduleBid] = useState<Bid | null>(null);
   const [editBid, setEditBid] = useState<Bid | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
+  const [requestDialog, setRequestDialog] = useState<"new" | RequestEntry | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -92,10 +147,14 @@ export function DiscoverView({
     setTimeout(() => setToast(null), 3500);
   };
 
-  const priced = request?.bids.filter((b) => b.price != null) ?? [];
+  const priced = featured?.bids.filter((b) => b.price != null) ?? [];
   const avg = priced.length ? priced.reduce((a, b) => a + (b.price ?? 0), 0) / priced.length : 0;
-  const requestOpen = request?.status === "open";
-  const invitedNames = new Set(request?.bids.map((b) => b.vendor_name.toLowerCase()) ?? []);
+  const invitedNames = new Set(
+    (proTarget === "new"
+      ? []
+      : requests.find((r) => r.id === proTarget)?.bids ?? featured?.bids ?? []
+    ).map((b) => b.vendor_name.toLowerCase())
+  );
 
   async function search() {
     if (!query.trim()) return;
@@ -131,6 +190,7 @@ export function DiscoverView({
     setSelected(pro);
     setProNotes("");
     setProFavorable(null);
+    setProTarget(openRequests[0]?.id ?? "new");
     setAddError(null);
   }
 
@@ -142,8 +202,8 @@ export function DiscoverView({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...(requestOpen && request ? { bid_request_id: request.id } : {}),
-          ...(newJobTitle.trim() ? { title: newJobTitle.trim() } : {}),
+          ...(proTarget !== "new" ? { bid_request_id: proTarget } : {}),
+          ...(proTarget === "new" && newJobTitle.trim() ? { title: newJobTitle.trim() } : {}),
           vendor_name: pro.name,
           meta: pro.distance_note ? `New · ${pro.distance_note}` : "New · found via search",
           rating: pro.rating,
@@ -181,35 +241,73 @@ export function DiscoverView({
 
   return (
     <>
-      {request && (
+      {/* ————— requests ————— */}
+      {requests.length > 1 && (
+        <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", alignItems: "center" }}>
+          {requests.map((r) => (
+            <button key={r.id} className="chip" aria-pressed={featured?.id === r.id}
+              onClick={() => setFeaturedId(r.id)} title={r.title}>
+              {r.title.length > 34 ? r.title.slice(0, 32) + "…" : r.title}
+              <span style={{ opacity: 0.6, fontSize: 11 }}>· {r.bids.length}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {featured && (
         <div className="card">
-          <div className="kicker">{requestOpen ? "Open request" : "Latest request"}</div>
+          <div className="kicker">
+            {featured.status === "open" ? "Open request" : featured.status === "accepted" ? "Accepted request" : "Closed request"}
+          </div>
           <div style={{ display: "flex", gap: "var(--space-4)", alignItems: "flex-start", flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 240 }}>
-              <h4>{request.title}</h4>
+              <h4>{featured.title}</h4>
               <div className="text-muted" style={{ fontSize: 12, marginTop: 4 }}>
-                Posted {shortDate(request.posted_at?.slice(0, 10))} ·{" "}
-                {request.bids.filter((b) => b.status !== "awaiting").length} of {request.bids.length} bids returned
-                {request.closes_at && requestOpen ? ` · closes ${shortDate(request.closes_at)}` : ""}
-                {request.status === "accepted" ? " · bid accepted" : ""}
+                Posted {shortDate(featured.posted_at?.slice(0, 10))} ·{" "}
+                {featured.bids.filter((b) => b.status !== "awaiting").length} of {featured.bids.length} bids returned
+                {featured.closes_at && featured.status === "open" ? ` · closes ${shortDate(featured.closes_at)}` : ""}
               </div>
-              {request.scope && <p className="card-body" style={{ marginTop: 8, maxWidth: "70ch" }}>{request.scope}</p>}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                {requestStatusTag(featured.status)}
+                {featured.category && <span className="tag tag-accent-2">{featured.category}</span>}
+                {priorityTag(featured.priority)}
+                {featured.budget != null && (
+                  <span className="tag tag-outline num">Target {money(featured.budget)}</span>
+                )}
+              </div>
+              {featured.scope && (
+                <p className="card-body" style={{ marginTop: 8, maxWidth: "70ch" }}>{featured.scope}</p>
+              )}
             </div>
             {canBid && (
-              <div style={{ display: "flex", gap: "var(--space-2)" }}>
+              <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+                <button className="btn btn-ghost" onClick={() => setRequestDialog(featured)}>
+                  <PencilSimple size={15} /> Edit request
+                </button>
                 <button className="btn btn-secondary" onClick={() => setManualOpen(true)}>
                   <Plus size={15} /> Add bid
                 </button>
-                <button className="btn btn-primary">Request more bids</button>
+                <button className="btn btn-primary" onClick={() => setRequestDialog("new")}>
+                  New request
+                </button>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {request && (
+      {!featured && canBid && (
+        <div className="card" style={{ alignItems: "flex-start" }}>
+          <div className="card-title">No bid requests yet</div>
+          <p className="card-body">Open a request to start collecting and comparing quotes.</p>
+          <button className="btn btn-primary" onClick={() => setRequestDialog("new")}>New request</button>
+        </div>
+      )}
+
+      {/* ————— bids for the featured request ————— */}
+      {featured && featured.bids.length > 0 && (
         <div className="grid-bids">
-          {request.bids.map((bid) => {
+          {featured.bids.map((bid) => {
             const vsAvg = bid.price != null && avg ? Math.round(((bid.price - avg) / avg) * 100) : null;
             const known = bid.badge === "In your book";
             return (
@@ -286,11 +384,12 @@ export function DiscoverView({
         </div>
       )}
 
+      {/* ————— local pro search ————— */}
       <div className="card">
         <div className="card-title">Find more local pros</div>
         <p className="card-body" style={{ margin: 0 }}>
           Search nearby contractors with ratings and reviews, then click a result to review it,
-          note why it caught your eye, and invite it to bid.
+          note why it caught your eye, and attach it to a bid request.
         </p>
         <form
           style={{ display: "flex", gap: "var(--space-2)", maxWidth: 620, flexWrap: "wrap" }}
@@ -408,7 +507,11 @@ export function DiscoverView({
                           placeholder="e.g. Top-rated nearby, neighbor recommended, good storm-repair reviews" />
                       </div>
                       <FavorableSeg value={proFavorable} onChange={setProFavorable} />
-                      {!requestOpen && (
+                      {openRequests.length > 0 && (
+                        <RequestSelect openRequests={openRequests} value={proTarget}
+                          onChange={setProTarget} allowNew />
+                      )}
+                      {(proTarget === "new" || openRequests.length === 0) && (
                         <div className="field">
                           <label>Job title for the new bid request</label>
                           <input className="input" value={newJobTitle}
@@ -420,7 +523,8 @@ export function DiscoverView({
                       {invitedNames.has(selected.name.toLowerCase()) ? (
                         <span className="tag tag-accent">Already in bids</span>
                       ) : (
-                        <button className="btn btn-primary btn-block" disabled={adding || (!requestOpen && !newJobTitle.trim())}
+                        <button className="btn btn-primary btn-block"
+                          disabled={adding || (proTarget === "new" && !newJobTitle.trim())}
                           onClick={() => addToBids(selected)}>
                           <PlusCircle size={15} /> {adding ? "Adding…" : "Add to bids"}
                         </button>
@@ -434,35 +538,38 @@ export function DiscoverView({
         )}
       </div>
 
-      {history.length > 0 && (
+      {/* ————— all bids, paginated ————— */}
+      <AllBidsSection requests={requests} canBid={canBid} onOpenBid={(b) => setEditBid(b)} />
+
+      {/* ————— request history ————— */}
+      {requests.length > 1 && (
         <div className="card">
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <ClockCounterClockwise size={16} style={{ color: "var(--color-accent-text)" }} />
-            <div className="card-title">Bid history</div>
+            <div className="card-title">Request history</div>
           </div>
           <div style={{ overflowX: "auto" }}>
             <table className="table">
               <thead>
                 <tr>
-                  <th>Request</th><th>Posted</th><th>Bids</th><th>Outcome</th>
+                  <th>Request</th><th>Category</th><th>Posted</th><th>Bids</th><th>Outcome</th>
                   <th style={{ textAlign: "right" }}>Winning price</th>
                 </tr>
               </thead>
               <tbody>
-                {history.map((h) => {
+                {requests.map((h) => {
                   const accepted = h.bids.find((b) => b.status === "accepted");
                   return (
-                    <tr key={h.id}>
+                    <tr key={h.id} style={{ cursor: "pointer" }} onClick={() => setFeaturedId(h.id)}>
                       <td style={{ fontSize: 13 }}>{h.title}</td>
+                      <td>{h.category ? <span className="tag tag-accent-2">{h.category}</span> : "—"}</td>
                       <td className="num">{shortDate(h.posted_at?.slice(0, 10))}</td>
                       <td className="num">{h.bids.length}</td>
                       <td>
                         {accepted ? (
                           <span className="tag tag-accent">{accepted.vendor_name}</span>
-                        ) : h.status === "open" ? (
-                          <span className="tag tag-outline">Open</span>
                         ) : (
-                          <span className="tag tag-neutral">Closed</span>
+                          requestStatusTag(h.status)
                         )}
                       </td>
                       <td className="num-cell">{accepted?.price != null ? money(accepted.price) : "—"}</td>
@@ -475,24 +582,35 @@ export function DiscoverView({
         </div>
       )}
 
+      {/* ————— dialogs & toast ————— */}
       {editBid && (
         <BidDetailsDialog
           bid={editBid}
+          openRequests={openRequests}
+          allRequests={requests}
           onClose={() => setEditBid(null)}
           onDone={(msg) => { setEditBid(null); showToast(msg); router.refresh(); }}
         />
       )}
       {manualOpen && (
         <ManualBidDialog
-          requestOpen={Boolean(requestOpen)}
+          openRequests={openRequests}
+          defaultRequestId={featured?.status === "open" ? featured.id : openRequests[0]?.id}
           onClose={() => setManualOpen(false)}
           onDone={(msg) => { setManualOpen(false); showToast(msg); router.refresh(); }}
+        />
+      )}
+      {requestDialog && (
+        <RequestDialog
+          existing={requestDialog === "new" ? null : requestDialog}
+          onClose={() => setRequestDialog(null)}
+          onDone={(msg) => { setRequestDialog(null); showToast(msg); router.refresh(); }}
         />
       )}
       {scheduleBid && (
         <ScheduleBidDialog
           bid={scheduleBid}
-          requestTitle={request?.title ?? "Scheduled job"}
+          requestTitle={requests.find((r) => r.id === scheduleBid.bid_request_id)?.title ?? "Scheduled job"}
           onClose={() => setScheduleBid(null)}
           onDone={(msg) => { setScheduleBid(null); showToast(msg); router.refresh(); }}
         />
@@ -502,12 +620,263 @@ export function DiscoverView({
   );
 }
 
-/* ————— Bid details: notes, favorability, edits, removal ————— */
+/* ————— all bids, paginated ————— */
+
+const BIDS_PAGE_SIZE = 6;
+
+function AllBidsSection({
+  requests, canBid, onOpenBid,
+}: {
+  requests: RequestEntry[];
+  canBid: boolean;
+  onOpenBid: (bid: Bid) => void;
+}) {
+  const [page, setPage] = useState(0);
+  const rows = useMemo(
+    () =>
+      requests.flatMap((r) =>
+        r.bids.map((b) => ({ bid: b, requestTitle: r.title, posted: r.posted_at }))
+      ),
+    [requests]
+  );
+  const pages = Math.max(1, Math.ceil(rows.length / BIDS_PAGE_SIZE));
+  const clamped = Math.min(page, pages - 1);
+  const visible = rows.slice(clamped * BIDS_PAGE_SIZE, clamped * BIDS_PAGE_SIZE + BIDS_PAGE_SIZE);
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <ListBullets size={16} style={{ color: "var(--color-accent-text)" }} />
+        <div className="card-title">All bids</div>
+        <span className="text-muted num" style={{ fontSize: 12, marginLeft: "auto" }}>
+          {rows.length} total
+        </span>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Vendor</th><th>Request</th><th>Status</th><th>Favorability</th><th>Notes</th>
+              <th style={{ textAlign: "right" }}>Price</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map(({ bid, requestTitle }) => (
+              <tr key={bid.id}
+                style={canBid ? { cursor: "pointer" } : undefined}
+                onClick={canBid ? () => onOpenBid(bid) : undefined}
+                title={canBid ? "Open bid details" : undefined}>
+                <td style={{ fontSize: 13 }}>
+                  <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <span className="avatar" style={{ width: 26, height: 26, fontSize: 10 }}>{initials(bid.vendor_name)}</span>
+                    {bid.vendor_name}
+                  </span>
+                </td>
+                <td className="text-muted" style={{ fontSize: 12.5, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {requestTitle}
+                </td>
+                <td>{bidStatusTag(bid.status)}</td>
+                <td>{favorableTag(bid.favorable) ?? <span className="text-muted">—</span>}</td>
+                <td className="text-muted" style={{ fontSize: 12, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {bid.notes ?? "—"}
+                </td>
+                <td className="num-cell">{bid.price != null ? money(bid.price) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {pages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "flex-end" }}>
+          <button className="btn btn-icon" disabled={clamped === 0}
+            onClick={() => setPage(clamped - 1)} aria-label="Previous page">
+            <CaretLeft size={15} />
+          </button>
+          <span className="num text-muted" style={{ fontSize: 12 }}>
+            Page {clamped + 1} of {pages}
+          </span>
+          <button className="btn btn-icon" disabled={clamped >= pages - 1}
+            onClick={() => setPage(clamped + 1)} aria-label="Next page">
+            <CaretRight size={15} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ————— request create/edit dialog ————— */
+
+function RequestDialog({
+  existing, onClose, onDone,
+}: {
+  existing: RequestEntry | null;
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
+  const [title, setTitle] = useState(existing?.title ?? "");
+  const [category, setCategory] = useState(existing?.category ?? "");
+  const [priority, setPriority] = useState<"low" | "normal" | "high">(existing?.priority ?? "normal");
+  const [budget, setBudget] = useState(existing?.budget != null ? String(existing.budget) : "");
+  const [closesAt, setClosesAt] = useState(existing?.closes_at ?? "");
+  const [scope, setScope] = useState(existing?.scope ?? "");
+  const [status, setStatus] = useState<"open" | "closed">(
+    existing?.status === "closed" ? "closed" : "open"
+  );
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const accepted = existing?.status === "accepted";
+
+  async function save() {
+    setError(null);
+    setBusy(true);
+    try {
+      const payload = {
+        title: title.trim(),
+        scope: scope.trim() || null,
+        category: category || null,
+        priority,
+        budget: budget === "" ? null : Number(budget),
+        closes_at: closesAt || null,
+        ...(existing && !accepted ? { status } : {}),
+      };
+      const res = await fetch(existing ? `/api/requests/${existing.id}` : "/api/requests", {
+        method: existing ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error ?? "Save failed");
+        return;
+      }
+      onDone(existing ? "Request updated." : `Request opened: ${title.trim()}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!existing) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/requests/${existing.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json();
+        setError(body.error ?? "Delete failed");
+        return;
+      }
+      onDone("Request deleted, along with its bids.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="dialog" role="dialog" aria-label={existing ? "Edit request" : "New request"}>
+        <div className="dialog-title">{existing ? "Edit request" : "New bid request"}</div>
+        <div className="field">
+          <label>Job title</label>
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Replace cedar privacy fence — 120 linear ft" autoFocus={!existing} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+          <div className="field">
+            <label>Category</label>
+            <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
+              <option value="">Uncategorized</option>
+              {TRADES.map((t) => <option key={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Target budget ($, optional)</label>
+            <input className="input num" type="number" min={0} value={budget}
+              onChange={(e) => setBudget(e.target.value)} placeholder="No target" />
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: "var(--space-4)", flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div className="field" style={{ flex: 1, minWidth: 160 }}>
+            <label>Bids close</label>
+            <input className="input" type="date" value={closesAt}
+              onChange={(e) => setClosesAt(e.target.value)} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 500, marginBottom: 5, color: "color-mix(in srgb, var(--color-text) 70%, transparent)" }}>
+              Priority
+            </label>
+            <div className="seg" role="group" aria-label="Priority">
+              {(["low", "normal", "high"] as const).map((p) => (
+                <button key={p} type="button" className="seg-opt" aria-pressed={priority === p}
+                  onClick={() => setPriority(p)}>
+                  {p[0].toUpperCase() + p.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="field">
+          <label>Scope outline — what exactly is the job?</label>
+          <textarea className="input" style={{ minHeight: 96 }} value={scope}
+            onChange={(e) => setScope(e.target.value)}
+            placeholder={"Outline the work so every bidder prices the same job:\n• tear-out & haul away\n• materials & dimensions\n• site details, access, timing"} />
+        </div>
+        {existing && !accepted && (
+          <div className="seg" role="group" aria-label="Status">
+            <button type="button" className="seg-opt" aria-pressed={status === "open"}
+              onClick={() => setStatus("open")}>
+              Open for bids
+            </button>
+            <button type="button" className="seg-opt" aria-pressed={status === "closed"}
+              onClick={() => setStatus("closed")}>
+              Closed
+            </button>
+          </div>
+        )}
+        {accepted && (
+          <p className="card-body" style={{ margin: 0 }}>
+            A bid was accepted on this request, so its status is locked.
+          </p>
+        )}
+        {error && <div className="field-error">{error}</div>}
+        <div className="dialog-actions" style={{ justifyContent: existing ? "space-between" : "flex-end" }}>
+          {existing && (
+            confirmDelete ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 12.5 }}>Delete request and its {existing.bids.length} bid{existing.bids.length === 1 ? "" : "s"}?</span>
+                <button className="btn btn-danger" disabled={busy} onClick={remove}>
+                  <Trash size={14} /> Delete
+                </button>
+                <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>Keep</button>
+              </div>
+            ) : (
+              <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>
+                <Trash size={14} /> Delete request
+              </button>
+            )
+          )}
+          <div style={{ display: "flex", gap: "var(--space-2)" }}>
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled={busy || !title.trim()} onClick={save}>
+              {busy ? "Saving…" : existing ? "Save request" : "Open request"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ————— bid details: notes, favorability, edits, re-attachment, removal ————— */
 
 function BidDetailsDialog({
-  bid, onClose, onDone,
+  bid, openRequests, allRequests, onClose, onDone,
 }: {
   bid: Bid;
+  openRequests: RequestEntry[];
+  allRequests: RequestEntry[];
   onClose: () => void;
   onDone: (msg: string) => void;
 }) {
@@ -517,9 +886,19 @@ function BidDetailsDialog({
   );
   const [price, setPrice] = useState(bid.price != null ? String(bid.price) : "");
   const [startDate, setStartDate] = useState(bid.start_date ?? "");
+  const [target, setTarget] = useState<number | "new">(bid.bid_request_id);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // The bid's own request plus any open requests it could move to.
+  const attachable = useMemo(() => {
+    const seen = new Set<number>();
+    return [
+      ...allRequests.filter((r) => r.id === bid.bid_request_id),
+      ...openRequests,
+    ].filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+  }, [allRequests, openRequests, bid.bid_request_id]);
 
   async function save() {
     setError(null);
@@ -533,6 +912,9 @@ function BidDetailsDialog({
           favorable,
           price: price === "" ? null : Number(price),
           start_date: startDate || null,
+          ...(typeof target === "number" && target !== bid.bid_request_id
+            ? { bid_request_id: target }
+            : {}),
         }),
       });
       if (!res.ok) {
@@ -584,6 +966,10 @@ function BidDetailsDialog({
               onChange={(e) => setStartDate(e.target.value)} />
           </div>
         </div>
+        {attachable.length > 1 && (
+          <RequestSelect openRequests={attachable} value={target}
+            onChange={(v) => { if (v !== "new") setTarget(v); }} allowNew={false} />
+        )}
         <div className="field">
           <label>Notes — why they were called or searched</label>
           <textarea className="input" style={{ minHeight: 80 }}
@@ -618,12 +1004,13 @@ function BidDetailsDialog({
   );
 }
 
-/* ————— Manual bid entry ————— */
+/* ————— manual bid entry ————— */
 
 function ManualBidDialog({
-  requestOpen, onClose, onDone,
+  openRequests, defaultRequestId, onClose, onDone,
 }: {
-  requestOpen: boolean;
+  openRequests: RequestEntry[];
+  defaultRequestId: number | undefined;
   onClose: () => void;
   onDone: (msg: string) => void;
 }) {
@@ -632,6 +1019,7 @@ function ManualBidDialog({
   const [startDate, setStartDate] = useState("");
   const [notes, setNotes] = useState("");
   const [favorable, setFavorable] = useState<0 | 1 | null>(null);
+  const [target, setTarget] = useState<number | "new">(defaultRequestId ?? "new");
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -649,7 +1037,8 @@ function ManualBidDialog({
           start_date: startDate || null,
           notes: notes.trim() || null,
           favorable,
-          ...(title.trim() ? { title: title.trim() } : {}),
+          ...(target !== "new" ? { bid_request_id: target } : {}),
+          ...(target === "new" && title.trim() ? { title: title.trim() } : {}),
         }),
       });
       const body = await res.json();
@@ -688,6 +1077,16 @@ function ManualBidDialog({
               onChange={(e) => setStartDate(e.target.value)} />
           </div>
         </div>
+        {openRequests.length > 0 && (
+          <RequestSelect openRequests={openRequests} value={target} onChange={setTarget} allowNew />
+        )}
+        {(target === "new" || openRequests.length === 0) && (
+          <div className="field">
+            <label>Job title for the new bid request</label>
+            <input className="input" value={title} onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Fence replacement" />
+          </div>
+        )}
         <div className="field">
           <label>Notes — why they were called</label>
           <textarea className="input" style={{ minHeight: 64 }}
@@ -695,18 +1094,11 @@ function ManualBidDialog({
             placeholder="e.g. Did the neighbor's fence last spring; quoted over the phone" />
         </div>
         <FavorableSeg value={favorable} onChange={setFavorable} />
-        {!requestOpen && (
-          <div className="field">
-            <label>Job title for the new bid request</label>
-            <input className="input" value={title} onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Fence replacement" />
-          </div>
-        )}
         {error && <div className="field-error">{error}</div>}
         <div className="dialog-actions">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary"
-            disabled={busy || !vendor.trim() || (!requestOpen && !title.trim())} onClick={save}>
+            disabled={busy || !vendor.trim() || (target === "new" && !title.trim())} onClick={save}>
             {busy ? "Adding…" : "Add bid"}
           </button>
         </div>
@@ -715,7 +1107,7 @@ function ManualBidDialog({
   );
 }
 
-/* ————— Add a bid to the schedule ————— */
+/* ————— add a bid to the schedule ————— */
 
 function ScheduleBidDialog({
   bid, requestTitle, onClose, onDone,

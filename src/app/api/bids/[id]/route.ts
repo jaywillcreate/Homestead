@@ -10,6 +10,8 @@ const patchSchema = z.object({
   start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
   favorable: z.union([z.literal(0), z.literal(1)]).nullable().optional(),
+  /** Re-attach the bid to a different request. */
+  bid_request_id: z.number().int().optional(),
 });
 
 export async function PATCH(req: Request, { params }: Params) {
@@ -25,10 +27,22 @@ export async function PATCH(req: Request, { params }: Params) {
     if (!parsed.success) return Response.json({ error: "Validation failed" }, { status: 400 });
     const d = parsed.data;
 
-    // Field edits (notes, favorability, manual price/date corrections).
+    // Field edits (notes, favorability, manual price/date corrections, re-attachment).
     const fields: Record<string, unknown> = {};
     for (const key of ["price", "start_date", "notes", "favorable"] as const) {
       if (d[key] !== undefined) fields[key] = d[key];
+    }
+    if (d.bid_request_id !== undefined && d.bid_request_id !== bid.bid_request_id) {
+      const target = await qOne("SELECT id FROM bid_requests WHERE id = $1", [d.bid_request_id]);
+      if (!target) return Response.json({ error: "Target request not found" }, { status: 404 });
+      const clash = await qOne(
+        "SELECT id FROM bids WHERE bid_request_id = $1 AND lower(vendor_name) = lower($2)",
+        [d.bid_request_id, bid.vendor_name]
+      );
+      if (clash) {
+        return Response.json({ error: `${bid.vendor_name} is already on that request` }, { status: 409 });
+      }
+      fields.bid_request_id = d.bid_request_id;
     }
     if (Object.keys(fields).length) {
       // A bid that gains a price is no longer just awaiting.

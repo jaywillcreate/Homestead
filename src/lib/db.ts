@@ -206,6 +206,9 @@ CREATE INDEX IF NOT EXISTS idx_events_date ON scheduled_events(scheduled_for);
 -- In-place migrations for databases created before these columns existed.
 ALTER TABLE bids ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE bids ADD COLUMN IF NOT EXISTS favorable INTEGER;
+ALTER TABLE bid_requests ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE bid_requests ADD COLUMN IF NOT EXISTS priority TEXT;
+ALTER TABLE bid_requests ADD COLUMN IF NOT EXISTS budget DOUBLE PRECISION;
 `;
 
 function getPool(): Pool {

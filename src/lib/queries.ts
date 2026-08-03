@@ -343,7 +343,7 @@ export async function dueThisMonth(ym: string, _today: string) {
 
 export async function openBidRequest(): Promise<(BidRequest & { bids: Bid[] }) | null> {
   const req = await qOne<BidRequest>(
-    "SELECT * FROM bid_requests ORDER BY posted_at DESC LIMIT 1"
+    "SELECT * FROM bid_requests ORDER BY posted_at DESC, id DESC LIMIT 1"
   );
   if (!req) return null;
   const bids = await q<Bid>(
@@ -351,6 +351,22 @@ export async function openBidRequest(): Promise<(BidRequest & { bids: Bid[] }) |
     [req.id]
   );
   return { ...req, bids };
+}
+
+/** Every past bid request with its bids, newest first — the household's bid history. */
+export async function bidHistory(): Promise<(BidRequest & { bids: Bid[] })[]> {
+  const requests = await q<BidRequest>(
+    "SELECT * FROM bid_requests ORDER BY posted_at DESC, id DESC"
+  );
+  const out: (BidRequest & { bids: Bid[] })[] = [];
+  for (const req of requests) {
+    const bids = await q<Bid>(
+      "SELECT * FROM bids WHERE bid_request_id = $1 ORDER BY (price IS NULL), price",
+      [req.id]
+    );
+    out.push({ ...req, bids });
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------ users

@@ -2,12 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { MagnifyingGlass, ChatCircle, MapPin } from "@phosphor-icons/react";
+import {
+  MagnifyingGlass, ChatCircle, MapPin, X, Star, CalendarPlus, PlusCircle, ClockCounterClockwise,
+} from "@phosphor-icons/react";
 import { money, shortDate, initials } from "@/lib/format";
 import type { Bid, BidRequest } from "@/lib/types";
 import type { LocalPro, ZipLocation } from "@/lib/discovery";
 
 type Request = (BidRequest & { bids: Bid[] }) | null;
+type HistoryEntry = BidRequest & { bids: Bid[] };
 
 function badgeTag(badge: string | null) {
   if (!badge) return null;
@@ -17,7 +20,14 @@ function badgeTag(badge: string | null) {
   return <span className="tag tag-outline">{badge}</span>;
 }
 
-export function DiscoverView({ request, canBid }: { request: Request; canBid: boolean }) {
+export function DiscoverView({
+  request, history, canBid, canSchedule,
+}: {
+  request: Request;
+  history: HistoryEntry[];
+  canBid: boolean;
+  canSchedule: boolean;
+}) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [zip, setZip] = useState("");
@@ -26,9 +36,13 @@ export function DiscoverView({ request, canBid }: { request: Request; canBid: bo
   const [results, setResults] = useState<LocalPro[] | null>(null);
   const [source, setSource] = useState<string>("");
   const [location, setLocation] = useState<ZipLocation | null>(null);
+  const [selected, setSelected] = useState<LocalPro | null>(null);
+  const [newJobTitle, setNewJobTitle] = useState("");
+  const [addError, setAddError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [scheduleBid, setScheduleBid] = useState<Bid | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
-  // Remember the last ZIP the household searched from.
   useEffect(() => {
     try {
       const saved = localStorage.getItem("homestead-zip");
@@ -36,8 +50,15 @@ export function DiscoverView({ request, canBid }: { request: Request; canBid: bo
     } catch {}
   }, []);
 
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3500);
+  };
+
   const priced = request?.bids.filter((b) => b.price != null) ?? [];
   const avg = priced.length ? priced.reduce((a, b) => a + (b.price ?? 0), 0) / priced.length : 0;
+  const requestOpen = request?.status === "open";
+  const invitedNames = new Set(request?.bids.map((b) => b.vendor_name.toLowerCase()) ?? []);
 
   async function search() {
     if (!query.trim()) return;
@@ -48,6 +69,7 @@ export function DiscoverView({ request, canBid }: { request: Request; canBid: bo
     }
     setZipError(null);
     setSearching(true);
+    setSelected(null);
     try {
       const params = new URLSearchParams({ q: query.trim() });
       if (zipTrim) params.set("zip", zipTrim);
@@ -68,6 +90,37 @@ export function DiscoverView({ request, canBid }: { request: Request; canBid: bo
     }
   }
 
+  async function addToBids(pro: LocalPro) {
+    setAddError(null);
+    setAdding(true);
+    try {
+      const res = await fetch("/api/bids", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(requestOpen && request ? { bid_request_id: request.id } : {}),
+          ...(newJobTitle.trim() ? { title: newJobTitle.trim() } : {}),
+          vendor_name: pro.name,
+          meta: pro.distance_note ? `New · ${pro.distance_note}` : "New · found via search",
+          rating: pro.rating,
+          review_count: pro.review_count,
+          review_excerpt: pro.review_excerpt,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setAddError(body.error ?? "Could not add to bids");
+        return;
+      }
+      showToast(`${pro.name} added to bids — awaiting their quote.`);
+      setSelected(null);
+      setNewJobTitle("");
+      router.refresh();
+    } finally {
+      setAdding(false);
+    }
+  }
+
   async function acceptBid(bid: Bid) {
     const res = await fetch(`/api/bids/${bid.id}`, {
       method: "PATCH",
@@ -75,8 +128,7 @@ export function DiscoverView({ request, canBid }: { request: Request; canBid: bo
       body: JSON.stringify({ action: "accept" }),
     });
     if (res.ok) {
-      setToast(`Accepted ${bid.vendor_name}'s bid — other bids declined.`);
-      setTimeout(() => setToast(null), 3500);
+      showToast(`Accepted ${bid.vendor_name}'s bid — other bids declined.`);
       router.refresh();
     }
   }
@@ -85,14 +137,14 @@ export function DiscoverView({ request, canBid }: { request: Request; canBid: bo
     <>
       {request && (
         <div className="card">
-          <div className="kicker">Open request</div>
+          <div className="kicker">{requestOpen ? "Open request" : "Latest request"}</div>
           <div style={{ display: "flex", gap: "var(--space-4)", alignItems: "flex-start", flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 240 }}>
               <h4>{request.title}</h4>
               <div className="text-muted" style={{ fontSize: 12, marginTop: 4 }}>
                 Posted {shortDate(request.posted_at?.slice(0, 10))} ·{" "}
                 {request.bids.filter((b) => b.status !== "awaiting").length} of {request.bids.length} bids returned
-                {request.closes_at ? ` · closes ${shortDate(request.closes_at)}` : ""}
+                {request.closes_at && requestOpen ? ` · closes ${shortDate(request.closes_at)}` : ""}
                 {request.status === "accepted" ? " · bid accepted" : ""}
               </div>
               {request.scope && <p className="card-body" style={{ marginTop: 8, maxWidth: "70ch" }}>{request.scope}</p>}
@@ -143,7 +195,7 @@ export function DiscoverView({ request, canBid }: { request: Request; canBid: bo
                 {bid.review_excerpt && (
                   <p className="card-body" style={{ fontStyle: "italic", margin: 0 }}>{bid.review_excerpt}</p>
                 )}
-                <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "auto", paddingTop: "var(--space-2)" }}>
+                <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "auto", paddingTop: "var(--space-2)", flexWrap: "wrap" }}>
                   {bid.status === "accepted" ? (
                     <span className="tag tag-accent">Accepted</span>
                   ) : bid.status === "declined" ? (
@@ -156,6 +208,11 @@ export function DiscoverView({ request, canBid }: { request: Request; canBid: bo
                   ) : (
                     <button className="btn btn-ghost" disabled><ChatCircle size={15} /> Message</button>
                   )}
+                  {canSchedule && bid.status !== "declined" && (
+                    <button className="btn btn-secondary" onClick={() => setScheduleBid(bid)}>
+                      <CalendarPlus size={15} /> Add to schedule
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -166,7 +223,8 @@ export function DiscoverView({ request, canBid }: { request: Request; canBid: bo
       <div className="card">
         <div className="card-title">Find more local pros</div>
         <p className="card-body" style={{ margin: 0 }}>
-          Search nearby contractors with ratings and reviews, then invite them to bid so you can compare pricing.
+          Search nearby contractors with ratings and reviews, then click a result to review it and
+          invite it to bid.
         </p>
         <form
           style={{ display: "flex", gap: "var(--space-2)", maxWidth: 620, flexWrap: "wrap" }}
@@ -205,30 +263,233 @@ export function DiscoverView({ request, canBid }: { request: Request; canBid: bo
                   : "Sample results — set GOOGLE_PLACES_API_KEY in .env.local for live local data"}
               </span>
             </div>
-            <div className="grid-bids">
-              {results.map((p, i) => (
-                <div key={i} className="card">
-                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                    <span className="avatar" style={{ width: 38, height: 38, fontSize: 13 }}>{initials(p.name)}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="card-title" style={{ fontSize: 15 }}>{p.name}</div>
-                      <div className="text-muted" style={{ fontSize: 11 }}>{p.distance_note ?? "Nearby"}</div>
+            <div className="split-2" style={{ gridTemplateColumns: selected ? "1fr 320px" : "1fr", alignItems: "start" }}>
+              <div className="grid-bids">
+                {results.map((p, i) => {
+                  const isSelected = selected?.name === p.name;
+                  const invited = invitedNames.has(p.name.toLowerCase());
+                  return (
+                    <button
+                      key={i}
+                      className="card card-link"
+                      style={{
+                        textAlign: "left", font: "inherit", border: "none",
+                        boxShadow: isSelected ? "0 0 0 1.5px var(--color-accent), var(--shadow-md)" : undefined,
+                      }}
+                      onClick={() => { setSelected(isSelected ? null : p); setAddError(null); }}
+                    >
+                      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        <span className="avatar" style={{ width: 38, height: 38, fontSize: 13 }}>{initials(p.name)}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="card-title" style={{ fontSize: 15 }}>{p.name}</div>
+                          <div className="text-muted" style={{ fontSize: 11 }}>{p.distance_note ?? "Nearby"}</div>
+                        </div>
+                        {invited && <span className="tag tag-accent">In bids</span>}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {p.rating != null && <span className="tag tag-outline num">★ {p.rating.toFixed(1)}</span>}
+                        {p.review_count != null && <span className="tag tag-outline num">{p.review_count} reviews</span>}
+                      </div>
+                      {p.review_excerpt && (
+                        <p className="card-body" style={{ fontStyle: "italic", margin: 0 }}>{p.review_excerpt}</p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {selected && (
+                <div className="card" style={{ boxShadow: "var(--shadow-md)", position: "sticky", top: 90 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <span className="avatar" style={{ width: 44, height: 44, fontSize: 15 }}>{initials(selected.name)}</span>
+                      <div>
+                        <h5>{selected.name}</h5>
+                        <div className="text-muted" style={{ fontSize: 11 }}>
+                          {source === "google_places" ? "Google Places listing" : "Sample listing"}
+                        </div>
+                      </div>
                     </div>
+                    <button className="btn btn-icon" style={{ width: 30, height: 30, minHeight: 30 }}
+                      onClick={() => setSelected(null)} aria-label="Close">
+                      <X size={14} />
+                    </button>
                   </div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {p.rating != null && <span className="tag tag-outline num">★ {p.rating.toFixed(1)}</span>}
-                    {p.review_count != null && <span className="tag tag-outline num">{p.review_count} reviews</span>}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
+                    {selected.rating != null && (
+                      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        <Star size={14} style={{ color: "var(--color-accent-text)" }} />
+                        {selected.rating.toFixed(1)} · {selected.review_count ?? "—"} reviews
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <MapPin size={14} style={{ color: "var(--color-accent-text)" }} />
+                      {selected.address ?? selected.distance_note ?? "Nearby"}
+                    </div>
+                    {selected.distance_note && selected.address && (
+                      <div className="text-muted" style={{ fontSize: 12 }}>{selected.distance_note}</div>
+                    )}
                   </div>
-                  {p.review_excerpt && (
-                    <p className="card-body" style={{ fontStyle: "italic", margin: 0 }}>{p.review_excerpt}</p>
+                  {selected.review_excerpt && (
+                    <p className="card-body" style={{ fontStyle: "italic", margin: 0 }}>{selected.review_excerpt}</p>
+                  )}
+                  {canBid && (
+                    <>
+                      {!requestOpen && (
+                        <div className="field">
+                          <label>Job title for the new bid request</label>
+                          <input className="input" value={newJobTitle}
+                            onChange={(e) => setNewJobTitle(e.target.value)}
+                            placeholder="e.g. Roof repair — hail damage" />
+                        </div>
+                      )}
+                      {addError && <div className="field-error">{addError}</div>}
+                      {invitedNames.has(selected.name.toLowerCase()) ? (
+                        <span className="tag tag-accent">Already in bids</span>
+                      ) : (
+                        <button className="btn btn-primary btn-block" disabled={adding || (!requestOpen && !newJobTitle.trim())}
+                          onClick={() => addToBids(selected)}>
+                          <PlusCircle size={15} /> {adding ? "Adding…" : "Add to bids"}
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
-              ))}
+              )}
             </div>
           </>
         )}
       </div>
+
+      {history.length > 0 && (
+        <div className="card">
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <ClockCounterClockwise size={16} style={{ color: "var(--color-accent-text)" }} />
+            <div className="card-title">Bid history</div>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Request</th><th>Posted</th><th>Bids</th><th>Outcome</th>
+                  <th style={{ textAlign: "right" }}>Winning price</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((h) => {
+                  const accepted = h.bids.find((b) => b.status === "accepted");
+                  return (
+                    <tr key={h.id}>
+                      <td style={{ fontSize: 13 }}>{h.title}</td>
+                      <td className="num">{shortDate(h.posted_at?.slice(0, 10))}</td>
+                      <td className="num">{h.bids.length}</td>
+                      <td>
+                        {accepted ? (
+                          <span className="tag tag-accent">{accepted.vendor_name}</span>
+                        ) : h.status === "open" ? (
+                          <span className="tag tag-outline">Open</span>
+                        ) : (
+                          <span className="tag tag-neutral">Closed</span>
+                        )}
+                      </td>
+                      <td className="num-cell">{accepted?.price != null ? money(accepted.price) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {scheduleBid && (
+        <ScheduleBidDialog
+          bid={scheduleBid}
+          requestTitle={request?.title ?? "Scheduled job"}
+          onClose={() => setScheduleBid(null)}
+          onDone={(msg) => { setScheduleBid(null); showToast(msg); router.refresh(); }}
+        />
+      )}
       {toast && <div className="toast">{toast}</div>}
     </>
+  );
+}
+
+function ScheduleBidDialog({
+  bid, requestTitle, onClose, onDone,
+}: {
+  bid: Bid;
+  requestTitle: string;
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
+  const [date, setDate] = useState(bid.start_date ?? "");
+  const [timeWindow, setTimeWindow] = useState("");
+  const [addToBook, setAddToBook] = useState(bid.contractor_id == null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setError(null);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `${requestTitle} — ${bid.vendor_name}`,
+          scheduled_for: date,
+          time_window: timeWindow || null,
+          contractor_id: bid.contractor_id,
+          vendor_name: bid.vendor_name,
+          add_to_book: bid.contractor_id == null ? addToBook : false,
+          notes: bid.price != null ? `Bid: ${money(bid.price)}` : null,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error ?? "Could not schedule");
+        return;
+      }
+      onDone(`${bid.vendor_name} added to the schedule for ${shortDate(date)}.`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="dialog" role="dialog" aria-label="Add to schedule">
+        <div className="dialog-title">Add to schedule</div>
+        <p className="card-body" style={{ margin: 0 }}>
+          {requestTitle} · {bid.vendor_name}
+          {bid.price != null ? ` · ${money(bid.price)}` : ""}
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+          <div className="field">
+            <label>Date</label>
+            <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Time window (optional)</label>
+            <input className="input" placeholder="e.g. 8–10 AM" value={timeWindow}
+              onChange={(e) => setTimeWindow(e.target.value)} />
+          </div>
+        </div>
+        {bid.contractor_id == null && (
+          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, cursor: "pointer" }}>
+            <input type="checkbox" checked={addToBook} onChange={(e) => setAddToBook(e.target.checked)} />
+            Add {bid.vendor_name} to the contractor book
+          </label>
+        )}
+        {error && <div className="field-error">{error}</div>}
+        <div className="dialog-actions">
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={!date || saving} onClick={save}>
+            {saving ? "Scheduling…" : "Add to schedule"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -43,9 +43,12 @@ export function initials(name: string): string {
     .toUpperCase();
 }
 
-/** Resolve a stored upload reference: Vercel Blob URLs pass through, local paths go via the auth-gated file route. */
+/** Resolve a stored upload reference: private blobs go through the session-gated blob proxy, local paths via the file route. */
 export function fileHref(stored: string): string {
-  return stored.startsWith("http") ? stored : `/api/files/${stored}`;
+  if (stored.startsWith("blob:")) {
+    return `/api/files/blob?pathname=${encodeURIComponent(stored.slice(5))}`;
+  }
+  return `/api/files/${stored}`;
 }
 
 export const CADENCE_LABEL: Record<string, string> = {

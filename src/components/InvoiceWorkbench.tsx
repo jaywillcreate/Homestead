@@ -88,8 +88,7 @@ export function InvoiceWorkbench({
   const parts = draft?.line_items.filter((l) => l.type === "parts").reduce((a, b) => a + b.amount, 0) ?? 0;
   const fees = draft?.line_items.filter((l) => l.type === "fees").reduce((a, b) => a + b.amount, 0) ?? 0;
 
-  const isImage =
-    draft?.source_file && /\.(jpe?g|png|webp|gif|svg)([?#].*)?$/i.test(draft.source_file);
+  const isImage = draft?.source_file && /\.(jpe?g|png|webp|gif|svg)$/i.test(draft.source_file);
 
   return (
     <>

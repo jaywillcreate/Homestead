@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { MagnifyingGlass, ChatCircle } from "@phosphor-icons/react";
+import { MagnifyingGlass, ChatCircle, MapPin } from "@phosphor-icons/react";
 import { money, shortDate, initials } from "@/lib/format";
 import type { Bid, BidRequest } from "@/lib/types";
-import type { LocalPro } from "@/lib/discovery";
+import type { LocalPro, ZipLocation } from "@/lib/discovery";
 
 type Request = (BidRequest & { bids: Bid[] }) | null;
 
@@ -20,22 +20,49 @@ function badgeTag(badge: string | null) {
 export function DiscoverView({ request, canBid }: { request: Request; canBid: boolean }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
+  const [zip, setZip] = useState("");
+  const [zipError, setZipError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<LocalPro[] | null>(null);
   const [source, setSource] = useState<string>("");
+  const [location, setLocation] = useState<ZipLocation | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  // Remember the last ZIP the household searched from.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("homestead-zip");
+      if (saved) setZip(saved);
+    } catch {}
+  }, []);
 
   const priced = request?.bids.filter((b) => b.price != null) ?? [];
   const avg = priced.length ? priced.reduce((a, b) => a + (b.price ?? 0), 0) / priced.length : 0;
 
   async function search() {
     if (!query.trim()) return;
+    const zipTrim = zip.trim();
+    if (zipTrim && !/^\d{5}$/.test(zipTrim)) {
+      setZipError("Enter a 5-digit ZIP code");
+      return;
+    }
+    setZipError(null);
     setSearching(true);
     try {
-      const res = await fetch(`/api/discover?q=${encodeURIComponent(query.trim())}`);
+      const params = new URLSearchParams({ q: query.trim() });
+      if (zipTrim) params.set("zip", zipTrim);
+      const res = await fetch(`/api/discover?${params}`);
       const body = await res.json();
+      if (!res.ok) {
+        setZipError(body.error ?? "Search failed");
+        return;
+      }
       setResults(body.pros ?? []);
       setSource(body.source);
+      setLocation(body.location ?? null);
+      if (zipTrim) {
+        try { localStorage.setItem("homestead-zip", zipTrim); } catch {}
+      }
     } finally {
       setSearching(false);
     }
@@ -142,21 +169,41 @@ export function DiscoverView({ request, canBid }: { request: Request; canBid: bo
           Search nearby contractors with ratings and reviews, then invite them to bid so you can compare pricing.
         </p>
         <form
-          style={{ display: "flex", gap: "var(--space-2)", maxWidth: 520 }}
+          style={{ display: "flex", gap: "var(--space-2)", maxWidth: 620, flexWrap: "wrap" }}
           onSubmit={(e) => { e.preventDefault(); search(); }}
         >
           <input className="input" placeholder="e.g. fence contractor, water heater plumber"
+            style={{ flex: "2 1 240px" }}
             value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input
+            className={`input num${zipError ? " invalid" : ""}`}
+            placeholder="ZIP code"
+            inputMode="numeric"
+            maxLength={5}
+            style={{ flex: "0 1 110px" }}
+            value={zip}
+            onChange={(e) => { setZip(e.target.value.replace(/\D/g, "")); setZipError(null); }}
+            aria-label="ZIP code"
+          />
           <button className="btn btn-primary" disabled={searching}>
             <MagnifyingGlass size={15} /> {searching ? "Searching…" : "Search"}
           </button>
         </form>
+        {zipError && <div className="field-error">{zipError}</div>}
         {results && (
           <>
-            <div className="text-muted" style={{ fontSize: 11 }}>
-              {source === "google_places"
-                ? "Live results via Google Places"
-                : "Sample results — set GOOGLE_PLACES_API_KEY in .env.local for live local data"}
+            <div className="text-muted" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 6 }}>
+              {location && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--color-accent-text)" }}>
+                  <MapPin size={12} /> Near {location.city}, {location.state} {location.zip}
+                </span>
+              )}
+              {location && <span>·</span>}
+              <span>
+                {source === "google_places"
+                  ? "Live results via Google Places"
+                  : "Sample results — set GOOGLE_PLACES_API_KEY in .env.local for live local data"}
+              </span>
             </div>
             <div className="grid-bids">
               {results.map((p, i) => (

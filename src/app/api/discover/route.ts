@@ -3,16 +3,25 @@ import { run, qOne, logActivity } from "@/lib/db";
 import { requirePermission, permissionResponse } from "@/lib/auth";
 import { discoverLocalPros } from "@/lib/discovery";
 
-/** GET ?q=... — search nearby pros (Google Places when configured, sample otherwise). */
+/** GET ?q=...&zip=78230 — search nearby pros, geolocated to a US ZIP when given. */
 export async function GET(req: Request) {
   try {
     await requirePermission("view_records");
-    const q = new URL(req.url).searchParams.get("q") ?? "";
-    if (!q.trim()) return Response.json({ pros: [], source: "none" });
+    const params = new URL(req.url).searchParams;
+    const q = params.get("q") ?? "";
+    const zip = (params.get("zip") ?? "").trim();
+    if (!q.trim()) return Response.json({ pros: [], source: "none", location: null });
+    if (zip && !/^\d{5}$/.test(zip)) {
+      return Response.json({ error: "ZIP code must be 5 digits" }, { status: 400 });
+    }
     const property = await qOne<{ address: string | null }>(
       "SELECT address FROM properties LIMIT 1"
     );
-    const result = await discoverLocalPros(q.trim(), property?.address ?? "San Antonio, TX");
+    const result = await discoverLocalPros(
+      q.trim(),
+      property?.address ?? "San Antonio, TX",
+      zip || undefined
+    );
     return Response.json(result);
   } catch (err) {
     return permissionResponse(err) ?? Response.json({ error: "Server error" }, { status: 500 });

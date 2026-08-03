@@ -325,7 +325,7 @@ export async function recurringPlan() {
        (SELECT MIN(e.scheduled_for) FROM scheduled_events e
          WHERE e.task_id = t.id AND e.status != 'done') AS next_due
      FROM maintenance_tasks t LEFT JOIN contractors c ON c.id = t.assigned_contractor_id
-     ORDER BY next_due IS NULL, next_due`
+     ORDER BY next_due NULLS LAST`
   );
 }
 

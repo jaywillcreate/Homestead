@@ -12,6 +12,7 @@ const TITLES: [RegExp, string, string][] = [
   [/^\/schedule/, "Overview", "Maintenance schedule"],
   [/^\/discover/, "Overview", "Find local pros"],
   [/^\/materials/, "Overview", "Materials estimator"],
+  [/^\/properties/, "Records", "Properties"],
   [/^\/contractors\/new/, "Admin", "Add contractor"],
   [/^\/contractors\/\d+\/edit/, "Admin", "Edit contractor"],
   [/^\/contractors\/\d+/, "Contractors", "Contractor profile"],

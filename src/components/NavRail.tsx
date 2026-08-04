@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   HouseLine, SquaresFour, CalendarDots, MapPinArea, AddressBook, Receipt,
-  Images, ChartLineUp, SlidersHorizontal, UsersThree, SignOut, Package,
+  Images, ChartLineUp, SlidersHorizontal, UsersThree, SignOut, Package, Buildings,
 } from "@phosphor-icons/react";
 import { useUser } from "./UserProvider";
 
@@ -21,6 +21,7 @@ const GROUPS = [
   {
     label: "Records",
     items: [
+      { href: "/properties", label: "Properties", icon: Buildings },
       { href: "/contractors", label: "Contractors", icon: AddressBook },
       { href: "/invoices", label: "Invoices", icon: Receipt },
       { href: "/photos", label: "Job photos", icon: Images },

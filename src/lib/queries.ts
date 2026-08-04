@@ -377,6 +377,22 @@ export async function listProperties() {
   );
 }
 
+export async function listPropertyProfiles() {
+  return q<import("./types").PropertyProfile & {
+    job_count: number;
+    lifetime_spend: number;
+    open_requests: number;
+    upcoming_events: number;
+  }>(
+    `SELECT p.*,
+       (SELECT COUNT(*)::int FROM jobs j WHERE j.property_id = p.id) AS job_count,
+       COALESCE((SELECT SUM(j.amount) FROM jobs j WHERE j.property_id = p.id), 0)::float8 AS lifetime_spend,
+       (SELECT COUNT(*)::int FROM bid_requests r WHERE r.property_id = p.id AND r.status = 'open') AS open_requests,
+       (SELECT COUNT(*)::int FROM scheduled_events e WHERE e.property_id = p.id AND e.status != 'done') AS upcoming_events
+     FROM properties p ORDER BY p.id`
+  );
+}
+
 // ---------------------------------------------------- property insights
 
 export interface PropertyRecommendation {

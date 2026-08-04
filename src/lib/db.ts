@@ -225,6 +225,20 @@ ALTER TABLE bid_requests ADD COLUMN IF NOT EXISTS budget DOUBLE PRECISION;
 ALTER TABLE bid_requests DROP CONSTRAINT IF EXISTS bid_requests_status_check;
 ALTER TABLE bid_requests ADD CONSTRAINT bid_requests_status_check
   CHECK (status IN ('open','closed','accepted','scheduled'));
+-- Property profiles grew richer fields.
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS city TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS state TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS zip TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS property_type TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS year_built INTEGER;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS sqft INTEGER;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS lot_size TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS beds INTEGER;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS baths DOUBLE PRECISION;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS roof_type TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS hvac_type TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS water_heater TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS notes TEXT;
 `;
 
 function getPool(): Pool {

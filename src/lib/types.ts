@@ -159,6 +159,34 @@ export interface Bid {
   favorable: number | null;
 }
 
+export interface PropertyProfile {
+  id: number;
+  label: string;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  property_type: string | null;
+  year_built: number | null;
+  sqft: number | null;
+  lot_size: string | null;
+  beds: number | null;
+  baths: number | null;
+  roof_type: string | null;
+  hvac_type: string | null;
+  water_heater: string | null;
+  notes: string | null;
+}
+
+export const PROPERTY_TYPES = [
+  "Single family",
+  "Townhome",
+  "Condo",
+  "Duplex",
+  "Rental",
+  "Other",
+] as const;
+
 export const TRADES = [
   "Plumbing",
   "Electrical",

@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Receipt, Images, MapPinArea, CalendarDots, ArrowRight } from "@phosphor-icons/react";
-import { money, dayMonth, relativeTime, initials } from "@/lib/format";
+import {
+  Receipt, Images, MapPinArea, CalendarDots, ArrowRight, HouseLine,
+  Warning, Lightbulb,
+} from "@phosphor-icons/react";
+import { money, dayMonth, shortDate, relativeTime, initials } from "@/lib/format";
 import type { ContractorWithStats, ScheduledEvent } from "@/lib/types";
 
 interface Metrics {
@@ -11,6 +14,12 @@ interface Metrics {
   tasksDue: number; overdue: number; contractors: number; preferred: number;
 }
 type DueEvent = ScheduledEvent & { contractor_name: string | null };
+
+interface Insights {
+  property: { id: number; label: string; address: string | null } | null;
+  recentJobs: { id: number; title: string; performed_on: string; amount: number; contractor_name: string | null }[];
+  recommendations: { severity: "warn" | "info"; text: string; href: string }[];
+}
 
 const ACTIVITY_ICONS: Record<string, React.ReactNode> = {
   invoice: <Receipt size={16} />,
@@ -27,7 +36,7 @@ function statusTag(e: DueEvent, today: string) {
 }
 
 export function Dashboard({
-  metrics, spend, due, activity, topTrades, frequent, today,
+  metrics, spend, due, activity, topTrades, frequent, insights, today,
 }: {
   metrics: Metrics;
   spend: { ym: string; label: string; total: number }[];
@@ -35,6 +44,7 @@ export function Dashboard({
   activity: { id: number; kind: string; message: string; created_at: string }[];
   topTrades: { trade: string; total: number }[];
   frequent: ContractorWithStats[];
+  insights: Insights;
   today: string;
 }) {
   const [layout, setLayout] = useState<"a" | "b">("a");
@@ -266,6 +276,61 @@ export function Dashboard({
           </div>
         </div>
       )}
+
+      <InsightsCard insights={insights} />
     </>
+  );
+}
+
+function InsightsCard({ insights }: { insights: Insights }) {
+  if (!insights.property) return null;
+  return (
+    <div className="card">
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <HouseLine size={17} style={{ color: "var(--color-accent-text)" }} />
+        <div className="card-title">Property insights</div>
+        <span className="text-muted" style={{ fontSize: 12 }}>
+          {insights.property.label}
+          {insights.property.address ? ` · ${insights.property.address}` : ""}
+        </span>
+      </div>
+      <div className="split-2" style={{ gridTemplateColumns: "1.2fr 1fr" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+          <div className="kicker">Recommendations</div>
+          {insights.recommendations.length === 0 && (
+            <p className="card-body" style={{ margin: 0 }}>
+              All clear — nothing needs attention right now.
+            </p>
+          )}
+          {insights.recommendations.map((r, i) => (
+            <Link key={i} href={r.href}
+              style={{ display: "flex", gap: 10, alignItems: "flex-start", textDecoration: "none", color: "inherit" }}>
+              {r.severity === "warn" ? (
+                <Warning size={15} style={{ color: "var(--color-signal)", marginTop: 2, flex: "none" }} />
+              ) : (
+                <Lightbulb size={15} style={{ color: "var(--color-accent-text)", marginTop: 2, flex: "none" }} />
+              )}
+              <span style={{ fontSize: 13 }}>{r.text}</span>
+            </Link>
+          ))}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+          <div className="kicker">Recent jobs</div>
+          {insights.recentJobs.map((j) => (
+            <div key={j.id} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {j.title}
+                </div>
+                <div className="text-muted" style={{ fontSize: 11 }}>
+                  {j.contractor_name ?? "Self"} · {shortDate(j.performed_on)}
+                </div>
+              </div>
+              <span className="num" style={{ fontSize: 13, flex: "none" }}>{money(j.amount)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }

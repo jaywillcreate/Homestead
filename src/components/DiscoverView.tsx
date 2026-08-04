@@ -109,11 +109,18 @@ export interface BookContractor {
   trade: string;
 }
 
+export interface PropertyOption {
+  id: number;
+  label: string;
+  address: string | null;
+}
+
 export function DiscoverView({
-  requests, contractors, canBid, canSchedule,
+  requests, contractors, properties, canBid, canSchedule,
 }: {
   requests: RequestEntry[];
   contractors: BookContractor[];
+  properties: PropertyOption[];
   canBid: boolean;
   canSchedule: boolean;
 }) {
@@ -577,6 +584,8 @@ export function DiscoverView({
       {requestDialog && (
         <RequestDialog
           existing={requestDialog === "new" ? null : requestDialog}
+          contractors={contractors}
+          properties={properties}
           onClose={() => setRequestDialog(null)}
           onDone={(msg) => { setRequestDialog(null); showToast(msg); router.refresh(); }}
         />
@@ -796,9 +805,11 @@ function AllBidsSection({
 /* ————— request create/edit dialog ————— */
 
 function RequestDialog({
-  existing, onClose, onDone,
+  existing, contractors, properties, onClose, onDone,
 }: {
   existing: RequestEntry | null;
+  contractors: BookContractor[];
+  properties: PropertyOption[];
   onClose: () => void;
   onDone: (msg: string) => void;
 }) {
@@ -808,6 +819,10 @@ function RequestDialog({
   const [budget, setBudget] = useState(existing?.budget != null ? String(existing.budget) : "");
   const [closesAt, setClosesAt] = useState(existing?.closes_at ?? "");
   const [scope, setScope] = useState(existing?.scope ?? "");
+  const [propertyId, setPropertyId] = useState<number | "">(
+    existing?.property_id ?? properties[0]?.id ?? ""
+  );
+  const [attachId, setAttachId] = useState<number | "">("");
   const [status, setStatus] = useState<"open" | "closed">(
     existing?.status === "closed" ? "closed" : "open"
   );
@@ -815,6 +830,18 @@ function RequestDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const accepted = existing?.status === "accepted";
+
+  // Contractors already on this request can't be attached twice.
+  const alreadyOn = new Set(
+    (existing?.bids ?? []).map((b) => b.vendor_name.toLowerCase())
+  );
+  const attachable = contractors
+    .filter((c) => !alreadyOn.has(c.name.toLowerCase()))
+    .sort((a, b) => {
+      const am = category && a.trade === category ? 0 : 1;
+      const bm = category && b.trade === category ? 0 : 1;
+      return am - bm || a.name.localeCompare(b.name);
+    });
 
   async function save() {
     setError(null);
@@ -827,6 +854,7 @@ function RequestDialog({
         priority,
         budget: budget === "" ? null : Number(budget),
         closes_at: closesAt || null,
+        property_id: propertyId === "" ? null : propertyId,
         ...(existing && !accepted ? { status } : {}),
       };
       const res = await fetch(existing ? `/api/requests/${existing.id}` : "/api/requests", {
@@ -838,6 +866,20 @@ function RequestDialog({
       if (!res.ok) {
         setError(body.error ?? "Save failed");
         return;
+      }
+      // Attach the chosen book contractor as an awaiting bid on this request.
+      const requestId: number = existing ? existing.id : body.id;
+      if (attachId !== "" && requestId) {
+        const bidRes = await fetch("/api/bids", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bid_request_id: requestId, contractor_id: attachId }),
+        });
+        if (!bidRes.ok) {
+          const bidBody = await bidRes.json();
+          setError(`Request saved, but attaching the contractor failed: ${bidBody.error ?? "unknown error"}`);
+          return;
+        }
       }
       onDone(existing ? "Request updated." : `Request opened: ${title.trim()}`);
     } finally {
@@ -902,6 +944,32 @@ function RequestDialog({
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+          <div className="field">
+            <label>Property</label>
+            <select className="input" value={String(propertyId)}
+              onChange={(e) => setPropertyId(e.target.value === "" ? "" : Number(e.target.value))}>
+              {properties.length === 0 && <option value="">No properties</option>}
+              {properties.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}{p.address ? ` — ${p.address}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Attach contractor from book</label>
+            <select className="input" value={String(attachId)}
+              onChange={(e) => setAttachId(e.target.value === "" ? "" : Number(e.target.value))}>
+              <option value="">— None —</option>
+              {attachable.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} · {c.trade}{category && c.trade === category ? "  ◆ matches category" : ""}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
         <div className="field">

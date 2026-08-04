@@ -2,7 +2,9 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CloudArrowUp, File as FileIcon } from "@phosphor-icons/react";
+import {
+  CloudArrowUp, File as FileIcon, Plus, X, CaretUp, CaretDown,
+} from "@phosphor-icons/react";
 import { money, shortDate, dayMonth, fileHref } from "@/lib/format";
 import type { Invoice, InvoiceLineItem } from "@/lib/types";
 
@@ -54,6 +56,38 @@ export function InvoiceWorkbench({
 
   const patchDraft = <K extends keyof Draft>(key: K, value: Draft[K]) =>
     setDraft((d) => (d ? { ...d, [key]: value } : d));
+
+  // ————— itemized-list editing —————
+  const patchItem = (index: number, patch: Partial<InvoiceLineItem>) =>
+    setDraft((d) =>
+      d
+        ? { ...d, line_items: d.line_items.map((li, i) => (i === index ? { ...li, ...patch } : li)) }
+        : d
+    );
+  const removeItem = (index: number) =>
+    setDraft((d) => (d ? { ...d, line_items: d.line_items.filter((_, i) => i !== index) } : d));
+  const moveItem = (index: number, dir: -1 | 1) =>
+    setDraft((d) => {
+      if (!d) return d;
+      const items = [...d.line_items];
+      const j = index + dir;
+      if (j < 0 || j >= items.length) return d;
+      [items[index], items[j]] = [items[j], items[index]];
+      return { ...d, line_items: items };
+    });
+  const addItem = () =>
+    setDraft((d) =>
+      d
+        ? {
+            ...d,
+            line_items: [
+              ...d.line_items,
+              // Temporary negative id keeps React keys stable; the server re-creates rows on save.
+              { id: -Date.now(), invoice_id: d.id, description: "", type: "labor", amount: 0 },
+            ],
+          }
+        : d
+    );
 
   async function saveDraft(action?: "confirm") {
     if (!draft) return;
@@ -236,24 +270,77 @@ export function InvoiceWorkbench({
             </div>
 
             <div className="card">
-              <div className="card-title">Line items</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="card-title">Line items</div>
+                {canUpload && (
+                  <button className="btn btn-ghost" onClick={addItem}>
+                    <Plus size={14} /> Add item
+                  </button>
+                )}
+              </div>
               <div style={{ overflowX: "auto" }}>
                 <table className="table">
                   <thead>
-                    <tr><th>Description</th><th>Type</th><th style={{ textAlign: "right" }}>Amount</th></tr>
+                    <tr>
+                      <th style={{ width: "44%" }}>Description</th><th>Type</th>
+                      <th style={{ textAlign: "right" }}>Amount</th>
+                      {canUpload && <th aria-label="Organize" style={{ width: 96 }} />}
+                    </tr>
                   </thead>
                   <tbody>
-                    {draft.line_items.map((li, i) => (
-                      <tr key={li.id ?? i}>
-                        <td style={{ fontSize: 13 }}>{li.description}</td>
-                        <td>
-                          <span className={`tag ${li.type === "labor" ? "tag-accent" : li.type === "parts" ? "tag-accent-2" : "tag-neutral"}`}>
-                            {li.type[0].toUpperCase() + li.type.slice(1)}
-                          </span>
-                        </td>
-                        <td className="num-cell">{money(li.amount, 2)}</td>
-                      </tr>
-                    ))}
+                    {draft.line_items.map((li, i) =>
+                      canUpload ? (
+                        <tr key={li.id ?? i}>
+                          <td>
+                            <input className="input" style={{ minHeight: 34, padding: "4px 10px", fontSize: 13 }}
+                              value={li.description} placeholder="Describe the item"
+                              onChange={(e) => patchItem(i, { description: e.target.value })} />
+                          </td>
+                          <td>
+                            <select className="input" style={{ minHeight: 34, padding: "2px 8px", fontSize: 12.5, width: 92 }}
+                              value={li.type}
+                              onChange={(e) => patchItem(i, { type: e.target.value as InvoiceLineItem["type"] })}>
+                              <option value="labor">Labor</option>
+                              <option value="parts">Parts</option>
+                              <option value="fees">Fees</option>
+                            </select>
+                          </td>
+                          <td style={{ textAlign: "right" }}>
+                            <input className="input num" type="number" step="0.01"
+                              style={{ minHeight: 34, padding: "4px 10px", fontSize: 13, width: 104, textAlign: "right" }}
+                              value={li.amount}
+                              onChange={(e) => patchItem(i, { amount: Number(e.target.value) })} />
+                          </td>
+                          <td>
+                            <span style={{ display: "flex", gap: 2, justifyContent: "flex-end" }}>
+                              <button className="btn btn-icon" style={{ width: 26, height: 26, minHeight: 26 }}
+                                title="Move up" disabled={i === 0} onClick={() => moveItem(i, -1)}>
+                                <CaretUp size={12} />
+                              </button>
+                              <button className="btn btn-icon" style={{ width: 26, height: 26, minHeight: 26 }}
+                                title="Move down" disabled={i === draft.line_items.length - 1}
+                                onClick={() => moveItem(i, 1)}>
+                                <CaretDown size={12} />
+                              </button>
+                              <button className="btn btn-icon btn-danger" style={{ width: 26, height: 26, minHeight: 26 }}
+                                title="Remove item" onClick={() => removeItem(i)}>
+                                <X size={12} />
+                              </button>
+                            </span>
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={li.id ?? i}>
+                          <td style={{ fontSize: 13 }}>{li.description}</td>
+                          <td>
+                            <span className={`tag ${li.type === "labor" ? "tag-accent" : li.type === "parts" ? "tag-accent-2" : "tag-neutral"}`}>
+                              {li.type[0].toUpperCase() + li.type.slice(1)}
+                            </span>
+                          </td>
+                          <td className="num-cell">{money(li.amount, 2)}</td>
+                        </tr>
+                      )
+                    )}
                   </tbody>
                   <tfoot>
                     <tr>
@@ -262,14 +349,21 @@ export function InvoiceWorkbench({
                       </td>
                       <td />
                       <td className="num-cell" style={{ fontWeight: 500 }}>{money(labor + parts + fees, 2)}</td>
+                      {canUpload && <td />}
                     </tr>
                   </tfoot>
                 </table>
               </div>
               {canUpload && (
-                <div style={{ display: "flex", gap: "var(--space-2)" }}>
+                <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
                   <button className="btn btn-primary" onClick={() => saveDraft("confirm")}>Confirm &amp; file</button>
                   <button className="btn btn-secondary" onClick={() => saveDraft()}>Save draft</button>
+                  {Math.abs(labor + parts + fees - (draft.total ?? 0)) > 0.01 && (
+                    <button className="btn btn-ghost"
+                      onClick={() => patchDraft("total", Math.round((labor + parts + fees) * 100) / 100)}>
+                      Set total to items sum ({money(labor + parts + fees, 2)})
+                    </button>
+                  )}
                 </div>
               )}
             </div>

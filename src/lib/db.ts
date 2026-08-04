@@ -191,6 +191,18 @@ CREATE TABLE IF NOT EXISTS bids (
   status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received','awaiting','accepted','declined'))
 );
 
+CREATE TABLE IF NOT EXISTS material_estimates (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  bid_request_id INTEGER REFERENCES bid_requests(id) ON DELETE SET NULL,
+  bid_id INTEGER REFERENCES bids(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  query TEXT,
+  items TEXT NOT NULL DEFAULT '[]',
+  total DOUBLE PRECISION NOT NULL DEFAULT 0,
+  source TEXT,
+  created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+);
+
 CREATE TABLE IF NOT EXISTS activity_log (
   id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   kind TEXT NOT NULL,

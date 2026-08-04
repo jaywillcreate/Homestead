@@ -369,6 +369,141 @@ export async function bidHistory(): Promise<(BidRequest & { bids: Bid[] })[]> {
   return out;
 }
 
+// ------------------------------------------------------------- properties
+
+export async function listProperties() {
+  return q<{ id: number; label: string; address: string | null }>(
+    "SELECT id, label, address FROM properties ORDER BY id"
+  );
+}
+
+// ---------------------------------------------------- property insights
+
+export interface PropertyRecommendation {
+  severity: "warn" | "info";
+  text: string;
+  href: string;
+}
+
+export async function propertyInsights(today: string) {
+  const property = await qOne<{ id: number; label: string; address: string | null }>(
+    "SELECT id, label, address FROM properties ORDER BY id LIMIT 1"
+  );
+  const recentJobs = await q<{
+    id: number; title: string; performed_on: string; amount: number; contractor_name: string | null;
+  }>(
+    `SELECT j.id, j.title, j.performed_on, j.amount::float8 AS amount, c.business_name AS contractor_name
+     FROM jobs j LEFT JOIN contractors c ON c.id = j.contractor_id
+     WHERE j.status = 'done' AND j.performed_on IS NOT NULL
+     ORDER BY j.performed_on DESC LIMIT 5`
+  );
+
+  const recommendations: PropertyRecommendation[] = [];
+
+  const overdue = await q<{ name: string }>(
+    `SELECT name FROM scheduled_events
+     WHERE status != 'done' AND (status = 'overdue' OR scheduled_for < $1) LIMIT 3`,
+    [today]
+  );
+  if (overdue.length) {
+    recommendations.push({
+      severity: "warn",
+      text: `${overdue.length === 1 ? "Overdue task" : `${overdue.length} overdue tasks`}: ${overdue.map((o) => o.name).join(", ")} — reschedule or mark done.`,
+      href: "/schedule",
+    });
+  }
+
+  const lapsing = await q<{ business_name: string; insurance_expires: string }>(
+    `SELECT business_name, insurance_expires FROM contractors
+     WHERE status = 'active' AND insurance_expires IS NOT NULL
+       AND insurance_expires <= to_char(($1::date + interval '60 days'), 'YYYY-MM-DD')
+     ORDER BY insurance_expires LIMIT 2`,
+    [today]
+  );
+  for (const c of lapsing) {
+    recommendations.push({
+      severity: "warn",
+      text: `${c.business_name}'s insurance lapses ${c.insurance_expires} — request an updated certificate.`,
+      href: "/contractors",
+    });
+  }
+
+  const emptyTickets = await q<{ title: string }>(
+    `SELECT r.title FROM bid_requests r
+     WHERE r.status = 'open' AND NOT EXISTS (SELECT 1 FROM bids b WHERE b.bid_request_id = r.id)
+     LIMIT 2`
+  );
+  for (const t of emptyTickets) {
+    recommendations.push({
+      severity: "info",
+      text: `Ticket “${t.title}” has no bids yet — invite contractors or search local pros.`,
+      href: "/discover",
+    });
+  }
+
+  const awaitingDecision = await q<{ name: string }>(
+    `SELECT name FROM scheduled_events WHERE status = 'awaiting_decision' LIMIT 2`
+  );
+  for (const e of awaitingDecision) {
+    recommendations.push({
+      severity: "info",
+      text: `“${e.name}” is awaiting a decision — review and confirm.`,
+      href: "/schedule",
+    });
+  }
+
+  const awaitingInvoice = await q<{ title: string }>(
+    `SELECT j.title FROM jobs j WHERE j.status = 'done'
+     AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.job_id = j.id) LIMIT 2`
+  );
+  for (const j of awaitingInvoice) {
+    recommendations.push({
+      severity: "info",
+      text: `“${j.title}” is done but has no invoice on file — upload it to keep reports accurate.`,
+      href: "/invoices",
+    });
+  }
+
+  const year = today.slice(0, 4);
+  const pr = await plannedVsReactive(year);
+  const totalPR = pr.planned + pr.reactive;
+  if (totalPR > 0 && pr.reactive / totalPR > 0.35) {
+    recommendations.push({
+      severity: "info",
+      text: `Reactive work is ${Math.round((pr.reactive / totalPR) * 100)}% of this year's spend — adding recurring maintenance usually lowers total cost.`,
+      href: "/schedule",
+    });
+  }
+
+  return { property, recentJobs, recommendations: recommendations.slice(0, 5) };
+}
+
+// ------------------------------------------------------ material estimates
+
+export interface MaterialEstimateRow {
+  id: number;
+  bid_request_id: number | null;
+  bid_id: number | null;
+  title: string;
+  query: string | null;
+  items: string; // JSON MaterialItem[]
+  total: number;
+  source: string | null;
+  created_at: string;
+  request_title: string | null;
+  bid_vendor: string | null;
+}
+
+export async function listMaterialEstimates() {
+  return q<MaterialEstimateRow>(
+    `SELECT e.*, r.title AS request_title, b.vendor_name AS bid_vendor
+     FROM material_estimates e
+     LEFT JOIN bid_requests r ON r.id = e.bid_request_id
+     LEFT JOIN bids b ON b.id = e.bid_id
+     ORDER BY e.id DESC LIMIT 25`
+  );
+}
+
 // ------------------------------------------------------------------ users
 
 export async function listUsers() {

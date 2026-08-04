@@ -12,6 +12,7 @@ const patchSchema = z.object({
   priority: z.enum(["low", "normal", "high"]).nullable().optional(),
   budget: z.coerce.number().min(0).nullable().optional(),
   closes_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  property_id: z.number().int().nullable().optional(),
   /** 'accepted' is set only through accepting a bid, never directly. */
   status: z.enum(["open", "closed"]).optional(),
 });
@@ -34,7 +35,7 @@ export async function PATCH(req: Request, { params }: Params) {
       return Response.json({ error: "An accepted request's status can't be changed" }, { status: 400 });
     }
     const fields: Record<string, unknown> = {};
-    for (const key of ["title", "scope", "category", "priority", "budget", "closes_at", "status"] as const) {
+    for (const key of ["title", "scope", "category", "priority", "budget", "closes_at", "property_id", "status"] as const) {
       if (d[key] !== undefined) fields[key] = d[key];
     }
     if (Object.keys(fields).length) {

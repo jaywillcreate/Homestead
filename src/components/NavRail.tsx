@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -7,6 +8,13 @@ import {
   Images, ChartLineUp, SlidersHorizontal, UsersThree, SignOut, Package, Buildings,
 } from "@phosphor-icons/react";
 import { useUser } from "./UserProvider";
+import { BrandDialog } from "./BrandDialog";
+import { fileHref } from "@/lib/format";
+
+export interface Brand {
+  name: string;
+  logo: string | null;
+}
 
 const GROUPS = [
   {
@@ -47,18 +55,38 @@ function isActive(pathname: string, href: string): boolean {
   return pathname.startsWith(href);
 }
 
-export function NavRail() {
+export function NavRail({ brand }: { brand: Brand }) {
   const pathname = usePathname();
   const user = useUser();
   const router = useRouter();
   const initials = user.name.split(" ").map((w) => w[0]).slice(0, 2).join("");
+  const isOwner = user.role === "owner";
+  const [brandOpen, setBrandOpen] = useState(false);
 
   return (
     <aside className="side">
-      <div className="brand">
-        <span className="brand-mark"><HouseLine size={16} weight="regular" /></span>
-        <span className="brand-name">Homestead</span>
-      </div>
+      <button
+        className="brand"
+        onClick={isOwner ? () => setBrandOpen(true) : undefined}
+        title={isOwner ? "Edit household name & logo" : undefined}
+        style={{
+          background: "none", border: "none", font: "inherit", color: "inherit",
+          cursor: isOwner ? "pointer" : "default", textAlign: "left",
+        }}
+      >
+        <span className="brand-mark" style={{ overflow: "hidden" }}>
+          {brand.logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={fileHref(brand.logo)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          ) : (
+            <HouseLine size={16} weight="regular" />
+          )}
+        </span>
+        <span className="brand-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {brand.name}
+        </span>
+      </button>
+      {brandOpen && <BrandDialog brand={brand} onClose={() => setBrandOpen(false)} />}
       <nav className="side-nav">
         {GROUPS.map((g) => (
           <div className="side-group" key={g.label}>

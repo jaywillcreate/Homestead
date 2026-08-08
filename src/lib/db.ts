@@ -203,6 +203,11 @@ CREATE TABLE IF NOT EXISTS material_estimates (
   created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
 );
 
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS activity_log (
   id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -239,6 +244,8 @@ ALTER TABLE properties ADD COLUMN IF NOT EXISTS roof_type TEXT;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS hvac_type TEXT;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS water_heater TEXT;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS notes TEXT;
+-- Photo organization gained explicit ordering.
+ALTER TABLE job_photos ADD COLUMN IF NOT EXISTS sort_order INTEGER;
 `;
 
 function getPool(): Pool {

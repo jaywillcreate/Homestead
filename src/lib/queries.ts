@@ -56,9 +56,12 @@ export async function contractorDocuments(id: number) {
 // --------------------------------------------------------------- invoices
 
 export async function listInvoices(limit = 20) {
-  return q<Invoice & { contractor_name: string | null }>(
-    `SELECT i.*, c.business_name AS contractor_name
-     FROM invoices i LEFT JOIN contractors c ON c.id = i.contractor_id
+  return q<Invoice & { contractor_name: string | null; property_label: string | null }>(
+    `SELECT i.*, c.business_name AS contractor_name,
+       p.label || COALESCE(' — ' || p.address, '') AS property_label
+     FROM invoices i
+     LEFT JOIN contractors c ON c.id = i.contractor_id
+     LEFT JOIN properties p ON p.id = COALESCE(i.property_id, (SELECT j.property_id FROM jobs j WHERE j.id = i.job_id))
      ORDER BY i.invoice_date DESC NULLS LAST, i.id DESC LIMIT $1`,
     [limit]
   );
@@ -79,18 +82,22 @@ export async function getInvoice(
 // ----------------------------------------------------------------- photos
 
 export async function listJobsWithPhotos() {
-  const jobs = await q<Job & { contractor_name: string | null; invoice_number: string | null }>(
-    `SELECT j.*, c.business_name AS contractor_name, i.invoice_number
+  // Sections: any job that has photos, plus photo-album jobs created from the
+  // photos page (zero-amount, no invoice) so new empty sections show up.
+  const jobs = await q<Job & { contractor_name: string | null; invoice_number: string | null; has_invoice: boolean }>(
+    `SELECT j.*, c.business_name AS contractor_name, i.invoice_number,
+       (i.id IS NOT NULL) AS has_invoice
      FROM jobs j
      LEFT JOIN contractors c ON c.id = j.contractor_id
      LEFT JOIN invoices i ON i.job_id = j.id
      WHERE EXISTS (SELECT 1 FROM job_photos p WHERE p.job_id = j.id)
-     ORDER BY j.performed_on DESC NULLS LAST`
+        OR (j.notes = '__photo_section__')
+     ORDER BY j.performed_on DESC NULLS LAST, j.id DESC`
   );
   const out = [];
   for (const j of jobs) {
-    const photos = await q<JobPhoto>(
-      "SELECT * FROM job_photos WHERE job_id = $1 ORDER BY id",
+    const photos = await q<JobPhoto & { sort_order: number | null }>(
+      "SELECT * FROM job_photos WHERE job_id = $1 ORDER BY sort_order NULLS LAST, id",
       [j.id]
     );
     out.push({ ...j, photos });
@@ -354,11 +361,13 @@ export async function openBidRequest(): Promise<(BidRequest & { bids: Bid[] }) |
 }
 
 /** Every past bid request with its bids, newest first — the household's bid history. */
-export async function bidHistory(): Promise<(BidRequest & { bids: Bid[] })[]> {
-  const requests = await q<BidRequest>(
-    "SELECT * FROM bid_requests ORDER BY posted_at DESC, id DESC"
+export async function bidHistory(): Promise<(BidRequest & { bids: Bid[]; property_label: string | null })[]> {
+  const requests = await q<BidRequest & { property_label: string | null }>(
+    `SELECT r.*, p.label || COALESCE(' — ' || p.address, '') AS property_label
+     FROM bid_requests r LEFT JOIN properties p ON p.id = r.property_id
+     ORDER BY r.posted_at DESC, r.id DESC`
   );
-  const out: (BidRequest & { bids: Bid[] })[] = [];
+  const out: (BidRequest & { bids: Bid[]; property_label: string | null })[] = [];
   for (const req of requests) {
     const bids = await q<Bid>(
       "SELECT * FROM bids WHERE bid_request_id = $1 ORDER BY (price IS NULL), price",
@@ -367,6 +376,33 @@ export async function bidHistory(): Promise<(BidRequest & { bids: Bid[] })[]> {
     out.push({ ...req, bids });
   }
   return out;
+}
+
+// ------------------------------------------------------------ app settings
+
+export interface AppBrand {
+  name: string;
+  logo: string | null; // stored upload ref, resolved with fileHref()
+}
+
+export async function getAppBrand(): Promise<AppBrand> {
+  const rows = await q<{ key: string; value: string }>(
+    "SELECT key, value FROM app_settings WHERE key IN ('app_name', 'app_logo')"
+  );
+  const map = new Map(rows.map((r) => [r.key, r.value]));
+  return { name: map.get("app_name") || "Homestead", logo: map.get("app_logo") || null };
+}
+
+export async function setAppSetting(key: string, value: string | null): Promise<void> {
+  if (value === null) {
+    await q("DELETE FROM app_settings WHERE key = $1", [key]);
+  } else {
+    await q(
+      `INSERT INTO app_settings (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [key, value]
+    );
+  }
 }
 
 // ------------------------------------------------------------- properties

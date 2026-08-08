@@ -3,13 +3,26 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  CloudArrowUp, File as FileIcon, Plus, X, CaretUp, CaretDown,
+  CloudArrowUp, File as FileIcon, Plus, X, CaretUp, CaretDown, FunnelSimple,
 } from "@phosphor-icons/react";
 import { money, shortDate, dayMonth, fileHref } from "@/lib/format";
 import type { Invoice, InvoiceLineItem } from "@/lib/types";
 
 type Draft = Invoice & { line_items: InvoiceLineItem[] };
-type RecentInvoice = Invoice & { contractor_name: string | null };
+type RecentInvoice = Invoice & { contractor_name: string | null; property_label?: string | null };
+
+interface InvoiceFilters {
+  contractor: string;
+  property: string;
+  category: string;
+  status: string;
+  amountMin: string;
+  amountMax: string;
+}
+
+const EMPTY_INVOICE_FILTERS: InvoiceFilters = {
+  contractor: "", property: "", category: "", status: "", amountMin: "", amountMax: "",
+};
 
 export function InvoiceWorkbench({
   canUpload, initialDraft, recent, contractors,
@@ -25,7 +38,28 @@ export function InvoiceWorkbench({
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [filters, setFilters] = useState<InvoiceFilters>(EMPTY_INVOICE_FILTERS);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  const filteredRecent = recent.filter((inv) => {
+    const vendor = inv.contractor_name ?? inv.vendor ?? "";
+    if (filters.contractor && vendor !== filters.contractor) return false;
+    if (filters.property && (inv.property_label ?? "") !== filters.property) return false;
+    if (filters.category && (inv.category ?? "") !== filters.category) return false;
+    if (filters.status) {
+      const status = inv.status === "draft" ? "draft" : inv.payment_status;
+      if (status !== filters.status) return false;
+    }
+    const min = filters.amountMin === "" ? null : Number(filters.amountMin);
+    const max = filters.amountMax === "" ? null : Number(filters.amountMax);
+    if (min != null && inv.total < min) return false;
+    if (max != null && inv.total > max) return false;
+    return true;
+  });
+  const invoiceVendors = [...new Set(recent.map((i) => i.contractor_name ?? i.vendor ?? "").filter(Boolean))].sort();
+  const invoiceProperties = [...new Set(recent.map((i) => i.property_label ?? "").filter(Boolean))].sort();
+  const invoiceCategories = [...new Set(recent.map((i) => i.category ?? "").filter(Boolean))].sort();
+  const filtersActive = Object.values(filters).some((v) => v !== "");
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -373,16 +407,64 @@ export function InvoiceWorkbench({
 
       <div className="card">
         <div className="card-title">Recent invoices</div>
+        <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", alignItems: "center" }}>
+          <FunnelSimple size={15} style={{ color: "var(--color-accent-text)", flex: "none" }} />
+          <select className="input" style={{ minHeight: 36, padding: "4px 10px", fontSize: 12.5, flex: "1 1 150px" }}
+            value={filters.contractor} onChange={(e) => setFilters({ ...filters, contractor: e.target.value })}
+            aria-label="Filter by contractor">
+            <option value="">All contractors</option>
+            {invoiceVendors.map((v) => <option key={v}>{v}</option>)}
+          </select>
+          <select className="input" style={{ minHeight: 36, padding: "4px 10px", fontSize: 12.5, flex: "1 1 150px" }}
+            value={filters.property} onChange={(e) => setFilters({ ...filters, property: e.target.value })}
+            aria-label="Filter by property">
+            <option value="">All properties</option>
+            {invoiceProperties.map((p) => <option key={p}>{p}</option>)}
+          </select>
+          <select className="input" style={{ minHeight: 36, padding: "4px 10px", fontSize: 12.5, flex: "1 1 130px" }}
+            value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })}
+            aria-label="Filter by category">
+            <option value="">All categories</option>
+            {invoiceCategories.map((c) => <option key={c}>{c}</option>)}
+          </select>
+          <select className="input" style={{ minHeight: 36, padding: "4px 10px", fontSize: 12.5, flex: "0 1 120px" }}
+            value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+            aria-label="Filter by status">
+            <option value="">Any status</option>
+            <option value="paid">Paid</option>
+            <option value="unpaid">Unpaid</option>
+            <option value="overdue">Overdue</option>
+            <option value="draft">Draft</option>
+          </select>
+          <input className="input num" type="number" placeholder="$ min" min={0}
+            style={{ minHeight: 36, padding: "4px 10px", fontSize: 12.5, flex: "0 1 96px" }}
+            value={filters.amountMin} onChange={(e) => setFilters({ ...filters, amountMin: e.target.value })}
+            aria-label="Minimum amount" />
+          <input className="input num" type="number" placeholder="$ max" min={0}
+            style={{ minHeight: 36, padding: "4px 10px", fontSize: 12.5, flex: "0 1 96px" }}
+            value={filters.amountMax} onChange={(e) => setFilters({ ...filters, amountMax: e.target.value })}
+            aria-label="Maximum amount" />
+          {filtersActive && (
+            <button className="btn btn-ghost" onClick={() => setFilters(EMPTY_INVOICE_FILTERS)}>
+              <X size={13} /> Clear
+            </button>
+          )}
+        </div>
+        {filteredRecent.length < recent.length && (
+          <div className="text-muted" style={{ fontSize: 12 }}>
+            Showing {filteredRecent.length} of {recent.length} invoices
+          </div>
+        )}
         <div style={{ overflowX: "auto" }}>
           <table className="table">
             <thead>
               <tr>
-                <th>Vendor</th><th>Date</th><th>Category</th><th>Status</th>
+                <th>Vendor</th><th>Property</th><th>Date</th><th>Category</th><th>Status</th>
                 <th style={{ textAlign: "right" }}>Total</th>
               </tr>
             </thead>
             <tbody>
-              {recent.map((inv) => (
+              {filteredRecent.map((inv) => (
                 <tr key={inv.id} style={{ cursor: "pointer" }}
                   onClick={async () => {
                     const res = await fetch(`/api/invoices/${inv.id}`);
@@ -390,6 +472,9 @@ export function InvoiceWorkbench({
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }}>
                   <td>{inv.contractor_name ?? inv.vendor ?? "—"}</td>
+                  <td className="text-muted" style={{ fontSize: 12.5, maxWidth: 170, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {inv.property_label ?? "—"}
+                  </td>
                   <td className="num">{shortDate(inv.invoice_date)}</td>
                   <td>{inv.category ?? "—"}</td>
                   <td>

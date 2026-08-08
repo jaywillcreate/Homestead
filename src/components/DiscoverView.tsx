@@ -5,13 +5,47 @@ import { useRouter } from "next/navigation";
 import {
   MagnifyingGlass, ChatCircle, MapPin, X, Star, CalendarPlus, PlusCircle,
   ThumbsUp, ThumbsDown, NotePencil, Trash, Plus,
-  PencilSimple, CaretLeft, CaretRight, ListBullets, Ticket,
+  PencilSimple, CaretLeft, CaretRight, ListBullets, Ticket, FunnelSimple,
 } from "@phosphor-icons/react";
 import { money, shortDate, initials } from "@/lib/format";
 import { TRADES, type Bid, type BidRequest } from "@/lib/types";
 import type { LocalPro, ZipLocation } from "@/lib/discovery";
 
-type RequestEntry = BidRequest & { bids: Bid[] };
+type RequestEntry = BidRequest & { bids: Bid[]; property_label?: string | null };
+
+/** Client-side ticket filters for the request queue. */
+export interface QueueFilters {
+  contractor: string;
+  property: string; // property_id as string, "" = all
+  category: string;
+  priority: string;
+  costMin: string;
+  costMax: string;
+}
+
+const EMPTY_FILTERS: QueueFilters = {
+  contractor: "", property: "", category: "", priority: "", costMin: "", costMax: "",
+};
+
+export function applyQueueFilters(requests: RequestEntry[], f: QueueFilters): RequestEntry[] {
+  return requests.filter((r) => {
+    if (f.property && String(r.property_id ?? "") !== f.property) return false;
+    if (f.category && r.category !== f.category) return false;
+    if (f.priority && (r.priority ?? "normal") !== f.priority) return false;
+    if (f.contractor && !r.bids.some((b) => b.vendor_name === f.contractor)) return false;
+    const min = f.costMin === "" ? null : Number(f.costMin);
+    const max = f.costMax === "" ? null : Number(f.costMax);
+    if (min != null || max != null) {
+      const priced = r.bids.filter((b) => b.price != null && b.status !== "declined");
+      if (!priced.length) return false;
+      const inRange = priced.some(
+        (b) => (min == null || b.price! >= min) && (max == null || b.price! <= max)
+      );
+      if (!inRange) return false;
+    }
+    return true;
+  });
+}
 
 /* ————— small shared pieces ————— */
 
@@ -148,6 +182,8 @@ export function DiscoverView({
   const [editBid, setEditBid] = useState<Bid | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [requestDialog, setRequestDialog] = useState<"new" | RequestEntry | null>(null);
+  const [filters, setFilters] = useState<QueueFilters>(EMPTY_FILTERS);
+  const filteredRequests = useMemo(() => applyQueueFilters(requests, filters), [requests, filters]);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -259,12 +295,21 @@ export function DiscoverView({
       {/* ————— request queue: the property-task ticketing module ————— */}
       {requests.length > 0 && (
         <RequestQueue
-          requests={requests}
+          requests={filteredRequests}
+          totalCount={requests.length}
           featuredId={featured?.id ?? null}
           canBid={canBid}
           onSelect={setFeaturedId}
           onEdit={(r) => setRequestDialog(r)}
           onNew={() => setRequestDialog("new")}
+          filterBar={
+            <QueueFilterBar
+              filters={filters}
+              onChange={setFilters}
+              requests={requests}
+              properties={properties}
+            />
+          }
         />
       )}
 
@@ -603,6 +648,70 @@ export function DiscoverView({
   );
 }
 
+/* ————— queue filter bar ————— */
+
+function QueueFilterBar({
+  filters, onChange, requests, properties,
+}: {
+  filters: QueueFilters;
+  onChange: (f: QueueFilters) => void;
+  requests: RequestEntry[];
+  properties: PropertyOption[];
+}) {
+  const vendors = useMemo(
+    () => [...new Set(requests.flatMap((r) => r.bids.map((b) => b.vendor_name)))].sort(),
+    [requests]
+  );
+  const categories = useMemo(
+    () => [...new Set(requests.map((r) => r.category).filter(Boolean))] as string[],
+    [requests]
+  );
+  const set = (patch: Partial<QueueFilters>) => onChange({ ...filters, ...patch });
+  const active = Object.values(filters).some((v) => v !== "");
+  const selectStyle = { minHeight: 36, padding: "4px 10px", fontSize: 12.5, flex: "1 1 150px" } as const;
+
+  return (
+    <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", alignItems: "center" }}>
+      <FunnelSimple size={15} style={{ color: "var(--color-accent-text)", flex: "none" }} />
+      <select className="input" style={selectStyle} value={filters.contractor}
+        onChange={(e) => set({ contractor: e.target.value })} aria-label="Filter by contractor">
+        <option value="">All contractors</option>
+        {vendors.map((v) => <option key={v}>{v}</option>)}
+      </select>
+      <select className="input" style={selectStyle} value={filters.property}
+        onChange={(e) => set({ property: e.target.value })} aria-label="Filter by property">
+        <option value="">All properties</option>
+        {properties.map((p) => (
+          <option key={p.id} value={String(p.id)}>{p.label}{p.address ? ` — ${p.address}` : ""}</option>
+        ))}
+      </select>
+      <select className="input" style={selectStyle} value={filters.category}
+        onChange={(e) => set({ category: e.target.value })} aria-label="Filter by category">
+        <option value="">All categories</option>
+        {categories.map((c) => <option key={c}>{c}</option>)}
+      </select>
+      <select className="input" style={{ ...selectStyle, flex: "0 1 120px" }} value={filters.priority}
+        onChange={(e) => set({ priority: e.target.value })} aria-label="Filter by priority">
+        <option value="">Any priority</option>
+        <option value="high">High</option>
+        <option value="normal">Normal</option>
+        <option value="low">Low</option>
+      </select>
+      <input className="input num" type="number" placeholder="Bid $ min" min={0}
+        style={{ ...selectStyle, flex: "0 1 104px" }} value={filters.costMin}
+        onChange={(e) => set({ costMin: e.target.value })} aria-label="Minimum bid cost" />
+      <input className="input num" type="number" placeholder="Bid $ max" min={0}
+        style={{ ...selectStyle, flex: "0 1 104px" }} value={filters.costMax}
+        onChange={(e) => set({ costMax: e.target.value })} aria-label="Maximum bid cost" />
+      {active && (
+        <button className="btn btn-ghost" onClick={() => onChange(EMPTY_FILTERS)}>
+          <X size={13} /> Clear
+        </button>
+      )}
+    </div>
+  );
+}
+
 /* ————— request queue: running ticket list for property tasks ————— */
 
 const STATUS_ORDER: Record<BidRequest["status"], number> = {
@@ -611,14 +720,16 @@ const STATUS_ORDER: Record<BidRequest["status"], number> = {
 const PRIORITY_ORDER: Record<string, number> = { high: 0, normal: 1, low: 2 };
 
 function RequestQueue({
-  requests, featuredId, canBid, onSelect, onEdit, onNew,
+  requests, totalCount, featuredId, canBid, onSelect, onEdit, onNew, filterBar,
 }: {
   requests: RequestEntry[];
+  totalCount: number;
   featuredId: number | null;
   canBid: boolean;
   onSelect: (id: number) => void;
   onEdit: (r: RequestEntry) => void;
   onNew: () => void;
+  filterBar: React.ReactNode;
 }) {
   const sorted = useMemo(
     () =>
@@ -663,11 +774,17 @@ function RequestQueue({
         Property tasks queue here for bidding, then move to scheduling. Click a ticket to work
         its bids below.
       </p>
+      {filterBar}
+      {requests.length < totalCount && (
+        <div className="text-muted" style={{ fontSize: 12 }}>
+          Showing {requests.length} of {totalCount} tickets
+        </div>
+      )}
       <div style={{ overflowX: "auto" }}>
         <table className="table">
           <thead>
             <tr>
-              <th>#</th><th>Task</th><th>Category</th><th>Priority</th><th>Bids</th>
+              <th>#</th><th>Task</th><th>Property</th><th>Category</th><th>Priority</th><th>Bids</th>
               <th style={{ textAlign: "right" }}>Best bid</th><th>Status</th>
               {canBid && <th aria-label="Actions" />}
             </tr>
@@ -690,8 +807,11 @@ function RequestQueue({
                   aria-selected={isFeatured}
                 >
                   <td className="num text-muted" style={{ fontSize: 12 }}>#{r.id}</td>
-                  <td style={{ fontSize: 13, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <td style={{ fontSize: 13, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {r.title}
+                  </td>
+                  <td className="text-muted" style={{ fontSize: 12, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {r.property_label ?? "—"}
                   </td>
                   <td>{r.category ? <span className="tag tag-accent-2">{r.category}</span> : <span className="text-muted">—</span>}</td>
                   <td>{priorityTag(r.priority) ?? <span className="text-muted" style={{ fontSize: 12.5 }}>Normal</span>}</td>

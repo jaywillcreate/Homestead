@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { q } from "@/lib/db";
 import { getCurrentUser, createSession, SESSION_COOKIE } from "@/lib/auth";
+import { getAppBrand } from "@/lib/queries";
 import type { User } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -27,12 +28,13 @@ export default async function LoginPage() {
   const users = await q<User>(
     "SELECT * FROM users ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 ELSE 2 END"
   );
+  const brand = await getAppBrand();
 
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}>
       <div className="card" style={{ width: "min(420px, 100%)", gap: "var(--space-6)" }}>
         <div>
-          <div className="kicker">Homestead</div>
+          <div className="kicker">{brand.name}</div>
           <h3 style={{ marginTop: 4 }}>Who&apos;s signing in?</h3>
           <p className="card-body" style={{ marginTop: 6 }}>
             This household install uses profile-based sign-in. Roles gate what each person can

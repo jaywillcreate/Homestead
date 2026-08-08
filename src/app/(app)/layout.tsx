@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
+import { getAppBrand } from "@/lib/queries";
 import { UserProvider } from "@/components/UserProvider";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { NavRail } from "@/components/NavRail";
@@ -9,6 +10,7 @@ import type { Role } from "@/lib/types";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+  const brand = await getAppBrand();
 
   let prefs: { active?: string; customs?: never[] } = {};
   try {
@@ -21,7 +23,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     >
       <ThemeProvider initialActive={prefs.active ?? "Nocturne"} initialCustoms={prefs.customs ?? []}>
         <div className="shell">
-          <NavRail />
+          <NavRail brand={brand} />
           <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
             <AppBar />
             <main className="canvas" style={{ flex: 1 }}>{children}</main>

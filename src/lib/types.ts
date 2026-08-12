@@ -7,6 +7,18 @@ export interface User {
   role: Role;
   last_active: string | null;
   theme_prefs: string;
+  phone: string | null;
+  /** 1 once the number has been authenticated with an SMS code. */
+  phone_verified: number;
+}
+
+export interface ContractorDocument {
+  id: number;
+  contractor_id: number;
+  filename: string;
+  size: number;
+  kind: "insurance" | "license" | "warranty" | "other";
+  stored_path: string | null;
 }
 
 export interface Contractor {

@@ -1,19 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  ArrowLeft, Phone, EnvelopeSimple, MapPinArea, FileText, Images,
+  ArrowLeft, Phone, EnvelopeSimple, MapPinArea, Images,
 } from "@phosphor-icons/react/dist/ssr";
 import { getContractor, contractorJobs, contractorDocuments } from "@/lib/queries";
 import { getCurrentUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { money, shortDate, initials } from "@/lib/format";
-import type { Role } from "@/lib/types";
+import { ContractorDocuments } from "@/components/ContractorDocuments";
+import type { ContractorDocument, Role } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-function fmtSize(bytes: number) {
-  return bytes > 1_000_000 ? `${(bytes / 1_000_000).toFixed(1)} MB` : `${Math.round(bytes / 1000)} KB`;
-}
 
 export default async function ContractorProfile({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -129,19 +126,11 @@ export default async function ContractorProfile({ params }: { params: Promise<{ 
               </div>
             )}
           </div>
-          <div className="card">
-            <div className="card-title">Documents</div>
-            {docs.length === 0 && <p className="card-body">No documents on file.</p>}
-            {docs.map((d) => (
-              <div key={d.id} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13 }}>
-                <FileText size={16} style={{ color: "var(--color-accent-text)" }} />
-                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {d.filename}
-                </span>
-                <span className="text-muted num" style={{ fontSize: 11 }}>{fmtSize(d.size)}</span>
-              </div>
-            ))}
-          </div>
+          <ContractorDocuments
+            contractorId={c.id}
+            docs={docs as ContractorDocument[]}
+            canEdit={canEdit}
+          />
         </div>
       </div>
     </>

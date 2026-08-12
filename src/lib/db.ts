@@ -246,6 +246,23 @@ ALTER TABLE properties ADD COLUMN IF NOT EXISTS water_heater TEXT;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS notes TEXT;
 -- Photo organization gained explicit ordering.
 ALTER TABLE job_photos ADD COLUMN IF NOT EXISTS sort_order INTEGER;
+-- Phone notifications: users authenticate a phone number, then notifications
+-- can be sent to verified numbers only.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verify_code TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verify_expires TEXT;
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  sender_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  recipient_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  phone TEXT NOT NULL,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('sent','simulated','failed')),
+  error TEXT,
+  created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+);
 `;
 
 function getPool(): Pool {

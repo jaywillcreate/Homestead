@@ -4,8 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CaretLeft, CaretRight, X, User, Clock, ArrowsClockwise, CurrencyDollar, Plus,
+  GoogleLogo, DownloadSimple,
 } from "@phosphor-icons/react";
 import { money, shortDate, dayMonth, CADENCE_LABEL } from "@/lib/format";
+import { googleCalUrl } from "@/lib/calendar";
 import type { MaintenanceTask, ScheduledEvent } from "@/lib/types";
 
 type Ev = ScheduledEvent & { contractor_name: string | null };
@@ -71,7 +73,11 @@ export function ScheduleView({
       <div className="card">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div className="card-title">{monthTitle}</div>
-          <div style={{ display: "flex", gap: 4 }}>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <a className="btn btn-ghost" href={`/api/events/ics?month=${ym}`}
+              title="Download this month as .ics — import it into Google Calendar">
+              <DownloadSimple size={15} /> Export month
+            </a>
             <button className="btn btn-icon" onClick={() => nav(-1)} aria-label="Previous month"><CaretLeft size={16} /></button>
             <button className="btn btn-icon" onClick={() => nav(1)} aria-label="Next month"><CaretRight size={16} /></button>
           </div>
@@ -135,6 +141,10 @@ export function ScheduleView({
               ))}
             </div>
             {selected.notes && <p className="card-body" style={{ margin: 0 }}>{selected.notes}</p>}
+            <a className="btn btn-secondary" href={googleCalUrl(selected)} target="_blank" rel="noreferrer"
+              style={{ justifyContent: "center" }}>
+              <GoogleLogo size={15} /> Add to Google Calendar
+            </a>
             {canManage && selected.status !== "done" && (
               <div style={{ display: "flex", gap: "var(--space-2)" }}>
                 <button className="btn btn-primary" onClick={() => { patchEvent(selected.id, { status: "done" }); setSelectedId(null); }}>

@@ -14,7 +14,8 @@ export type Capability =
   | "manage_bids"
   | "manage_users"
   | "manage_properties"
-  | "manage_schedule";
+  | "manage_schedule"
+  | "send_notifications";
 
 export const PERMISSIONS: Record<Capability, Role[]> = {
   view_records: ["owner", "manager", "viewer"],
@@ -26,6 +27,7 @@ export const PERMISSIONS: Record<Capability, Role[]> = {
   manage_users: ["owner"],
   manage_properties: ["owner"],
   manage_schedule: ["owner", "manager"],
+  send_notifications: ["owner", "manager"],
 };
 
 export function can(role: Role, capability: Capability): boolean {
@@ -42,4 +44,5 @@ export const MATRIX_ROWS: { label: string; capability: Capability }[] = [
   { label: "Request and accept bids", capability: "manage_bids" },
   { label: "Invite people & set roles", capability: "manage_users" },
   { label: "Add or remove properties", capability: "manage_properties" },
+  { label: "Send phone notifications", capability: "send_notifications" },
 ];

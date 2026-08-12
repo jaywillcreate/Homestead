@@ -47,8 +47,8 @@ export async function contractorJobs(id: number) {
 }
 
 export async function contractorDocuments(id: number) {
-  return q<{ id: number; filename: string; size: number; kind: string }>(
-    "SELECT * FROM contractor_documents WHERE contractor_id = $1",
+  return q<{ id: number; filename: string; size: number; kind: string; stored_path: string | null }>(
+    "SELECT * FROM contractor_documents WHERE contractor_id = $1 ORDER BY id",
     [id]
   );
 }
@@ -559,8 +559,10 @@ export async function listMaterialEstimates() {
 // ------------------------------------------------------------------ users
 
 export async function listUsers() {
+  // Explicit columns: the pending phone_verify_code must never reach the client.
   return q<User & { properties: number }>(
-    `SELECT u.*, (SELECT COUNT(*)::int FROM user_properties up WHERE up.user_id = u.id) AS properties
+    `SELECT u.id, u.name, u.email, u.role, u.last_active, u.theme_prefs, u.phone, u.phone_verified,
+       (SELECT COUNT(*)::int FROM user_properties up WHERE up.user_id = u.id) AS properties
      FROM users u ORDER BY CASE u.role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 ELSE 2 END`
   );
 }

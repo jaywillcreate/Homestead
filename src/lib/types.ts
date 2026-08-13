@@ -12,6 +12,16 @@ export interface User {
   phone_verified: number;
 }
 
+export interface PropertyPhoto {
+  id: number;
+  property_id: number;
+  stored_path: string;
+  original_name: string | null;
+  caption: string | null;
+  sort_order: number | null;
+  created_at: string;
+}
+
 export interface ContractorDocument {
   id: number;
   contractor_id: number;

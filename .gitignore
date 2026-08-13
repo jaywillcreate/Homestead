@@ -6,3 +6,5 @@ storage/
 *.tsbuildinfo
 next-env.d.ts
 .env.local.bak
+.vercel
+.env*

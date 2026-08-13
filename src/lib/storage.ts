@@ -18,7 +18,9 @@ export const UPLOADS_DIR = path.join(process.cwd(), "storage", "uploads");
 const BLOB_PREFIX = "blob:";
 
 export function blobEnabled(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  // Two auth modes: legacy read-write token, or the native Vercel integration
+  // (BLOB_STORE_ID + runtime VERCEL_OIDC_TOKEN, resolved by the SDK itself).
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID);
 }
 
 /** Store an uploaded file. Returns the value to persist in the DB. */

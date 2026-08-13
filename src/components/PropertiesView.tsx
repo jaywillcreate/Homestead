@@ -1,34 +1,63 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Buildings, Plus, PencilSimple, Trash, MapPin, Thermometer, Drop, House,
+  Camera, X,
 } from "@phosphor-icons/react";
-import { money } from "@/lib/format";
-import { PROPERTY_TYPES, type PropertyProfile } from "@/lib/types";
+import { money, fileHref } from "@/lib/format";
+import { PROPERTY_TYPES, type PropertyProfile, type PropertyPhoto } from "@/lib/types";
 
 type PropertyWithStats = PropertyProfile & {
   job_count: number;
   lifetime_spend: number;
   open_requests: number;
   upcoming_events: number;
+  photos: PropertyPhoto[];
 };
 
 export function PropertiesView({
-  properties, canManage,
+  properties, canManage, canUpload,
 }: {
   properties: PropertyWithStats[];
   canManage: boolean;
+  canUpload: boolean;
 }) {
   const router = useRouter();
   const [dialog, setDialog] = useState<"new" | PropertyWithStats | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ photo: PropertyPhoto; propertyId: number } | null>(null);
+  const [uploadTarget, setUploadTarget] = useState<number | null>(null);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3500);
   };
+
+  async function uploadPhotos(propertyId: number, files: File[]) {
+    setUploadBusy(true);
+    try {
+      let failed: string | null = null;
+      for (const file of files) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("caption", file.name.replace(/\.[^.]+$/, ""));
+        const res = await fetch(`/api/properties/${propertyId}/photos`, { method: "POST", body: form });
+        if (!res.ok) {
+          const body = await res.json();
+          failed = body.error ?? "Upload failed";
+          break;
+        }
+      }
+      showToast(failed ?? `${files.length} photo${files.length === 1 ? "" : "s"} added.`);
+      router.refresh();
+    } finally {
+      setUploadBusy(false);
+    }
+  }
 
   return (
     <>
@@ -83,6 +112,29 @@ export function PropertiesView({
                 )}
               </div>
 
+              {(p.photos.length > 0 || canUpload) && (
+                <div style={{ display: "flex", gap: 6, overflowX: "auto", alignItems: "center", paddingBottom: 2 }}>
+                  {p.photos.map((ph) => (
+                    <button key={ph.id} title={ph.caption ?? "Property photo"}
+                      style={{ border: "none", padding: 0, cursor: "pointer", flex: "none", borderRadius: 8, overflow: "hidden", width: 72, height: 54, background: "var(--surface-variant)" }}
+                      onClick={() => setLightbox({ photo: ph, propertyId: p.id })}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={fileHref(ph.stored_path)} alt={ph.caption ?? "Property photo"}
+                        loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    </button>
+                  ))}
+                  {canUpload && (
+                    <button className="btn btn-secondary" disabled={uploadBusy}
+                      style={{ flex: "none", width: 72, height: 54, minHeight: 54, flexDirection: "column", gap: 2, fontSize: 10.5, padding: 4 }}
+                      title="Add property photos"
+                      onClick={() => { setUploadTarget(p.id); fileInput.current?.click(); }}>
+                      <Camera size={16} />
+                      {uploadBusy && uploadTarget === p.id ? "Adding…" : "Add photos"}
+                    </button>
+                  )}
+                </div>
+              )}
+
               {facts.length > 0 && (
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {facts.map((f) => <span key={f} className="tag tag-outline">{f}</span>)}
@@ -134,6 +186,15 @@ export function PropertiesView({
         })}
       </div>
 
+      <input
+        ref={fileInput} type="file" hidden multiple accept="image/*"
+        onChange={async (e) => {
+          const files = Array.from(e.target.files ?? []);
+          if (files.length && uploadTarget != null) await uploadPhotos(uploadTarget, files);
+          e.target.value = "";
+        }}
+      />
+
       {dialog && (
         <PropertyDialog
           existing={dialog === "new" ? null : dialog}
@@ -142,8 +203,120 @@ export function PropertiesView({
           onDone={(msg) => { setDialog(null); showToast(msg); router.refresh(); }}
         />
       )}
+      {lightbox && (
+        <PropertyPhotoDialog
+          photo={lightbox.photo}
+          propertyId={lightbox.propertyId}
+          canUpload={canUpload}
+          onClose={() => setLightbox(null)}
+          onDone={(msg) => { setLightbox(null); showToast(msg); router.refresh(); }}
+        />
+      )}
       {toast && <div className="toast">{toast}</div>}
     </>
+  );
+}
+
+function PropertyPhotoDialog({
+  photo, propertyId, canUpload, onClose, onDone,
+}: {
+  photo: PropertyPhoto;
+  propertyId: number;
+  canUpload: boolean;
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
+  const [caption, setCaption] = useState(photo.caption ?? "");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/properties/${propertyId}/photos/${photo.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ caption: caption.trim() || null }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        setError(body.error ?? "Save failed");
+        return;
+      }
+      onDone("Photo updated.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/properties/${propertyId}/photos/${photo.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json();
+        setError(body.error ?? "Delete failed");
+        return;
+      }
+      onDone("Photo deleted.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="dialog" role="dialog" aria-label="Property photo"
+        style={{ width: "min(640px, 100%)", maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div className="dialog-title" style={{ fontSize: 20 }}>Property photo</div>
+          <button className="btn btn-icon" style={{ width: 30, height: 30, minHeight: 30 }}
+            onClick={onClose} aria-label="Close">
+            <X size={14} />
+          </button>
+        </div>
+        <div style={{ background: "var(--sunken)", borderRadius: 12, overflow: "hidden", display: "grid", placeItems: "center", minHeight: 220 }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={fileHref(photo.stored_path)} alt={photo.caption ?? "Property photo"}
+            style={{ maxWidth: "100%", maxHeight: 420, objectFit: "contain" }} />
+        </div>
+        {canUpload ? (
+          <>
+            <div className="field">
+              <label>Caption</label>
+              <input className="input" value={caption} onChange={(e) => setCaption(e.target.value)}
+                placeholder="What does this photo show?" />
+            </div>
+            {error && <div className="field-error">{error}</div>}
+            <div className="dialog-actions" style={{ justifyContent: "space-between" }}>
+              {confirmDelete ? (
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ fontSize: 12.5 }}>Delete this photo?</span>
+                  <button className="btn btn-danger" disabled={busy} onClick={remove}>
+                    <Trash size={14} /> Delete
+                  </button>
+                  <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>Keep</button>
+                </div>
+              ) : (
+                <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>
+                  <Trash size={14} /> Delete photo
+                </button>
+              )}
+              <div style={{ display: "flex", gap: "var(--space-2)" }}>
+                <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                <button className="btn btn-primary" disabled={busy} onClick={save}>
+                  {busy ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <p className="card-body" style={{ margin: 0 }}>{photo.caption ?? "No caption"}</p>
+        )}
+      </div>
+    </div>
   );
 }
 

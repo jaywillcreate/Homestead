@@ -429,6 +429,13 @@ export async function listPropertyProfiles() {
   );
 }
 
+export async function listPropertyPhotos() {
+  return q<import("./types").PropertyPhoto>(
+    `SELECT id, property_id, stored_path, original_name, caption, sort_order, created_at
+     FROM property_photos ORDER BY property_id, sort_order NULLS LAST, id`
+  );
+}
+
 // ---------------------------------------------------- property insights
 
 export interface PropertyRecommendation {

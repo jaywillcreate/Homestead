@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  CloudArrowUp, File as FileIcon, Plus, X, CaretUp, CaretDown, FunnelSimple,
+  CloudArrowUp, File as FileIcon, Plus, X, CaretUp, CaretDown, FunnelSimple, Trash, PencilSimpleLine,
 } from "@phosphor-icons/react";
 import { money, shortDate, dayMonth, fileHref } from "@/lib/format";
 import type { Invoice, InvoiceLineItem } from "@/lib/types";
@@ -39,6 +39,8 @@ export function InvoiceWorkbench({
   const [notice, setNotice] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [filters, setFilters] = useState<InvoiceFilters>(EMPTY_INVOICE_FILTERS);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const filteredRecent = recent.filter((inv) => {
@@ -88,6 +90,46 @@ export function InvoiceWorkbench({
     }
   }, []);
 
+  /** Start a blank draft with no scan — for typing an invoice in by hand. */
+  async function addManual() {
+    setNotice(null);
+    setBusy(true);
+    try {
+      const res = await fetch("/api/invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const body = await res.json();
+      if (!res.ok) { setNotice(body.error ?? "Could not start an invoice."); return; }
+      setDraft(body.invoice);
+      router.refresh();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Delete any invoice — draft or filed — along with its line items and scan. */
+  async function deleteInvoice(id: number) {
+    setNotice(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/invoices/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setNotice(body.error ?? "Delete failed — try again.");
+        return;
+      }
+      if (draft?.id === id) setDraft(null);
+      setConfirmDeleteId(null);
+      showToast("Invoice deleted.");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const patchDraft = <K extends keyof Draft>(key: K, value: Draft[K]) =>
     setDraft((d) => (d ? { ...d, [key]: value } : d));
 
@@ -129,8 +171,8 @@ export function InvoiceWorkbench({
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        vendor: draft.vendor, invoice_number: draft.invoice_number,
-        invoice_date: draft.invoice_date, due_date: draft.due_date,
+        vendor: draft.vendor?.trim() || null, invoice_number: draft.invoice_number,
+        invoice_date: draft.invoice_date || null, due_date: draft.due_date || null,
         total: draft.total, category: draft.category,
         warranty_months: draft.warranty_months, payment_status: draft.payment_status,
         contractor_id: draft.contractor_id,
@@ -149,6 +191,8 @@ export function InvoiceWorkbench({
       router.refresh();
     } else {
       setDraft(body);
+      showToast("Saved.");
+      router.refresh();
     }
   }
 
@@ -180,6 +224,10 @@ export function InvoiceWorkbench({
               PDF, JPG or HEIC · fields extracted automatically and matched to a contractor
             </div>
           </div>
+          <button className="btn btn-secondary" disabled={uploading || busy} onClick={addManual}
+            title="Add an invoice without a scan — any vendor">
+            <PencilSimpleLine size={15} /> Enter manually
+          </button>
           <button className="btn btn-primary" disabled={uploading} onClick={() => fileInput.current?.click()}>
             {uploading ? "Working…" : "Browse files"}
           </button>
@@ -211,7 +259,13 @@ export function InvoiceWorkbench({
               <span className="num" style={{ fontSize: 12.5, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {draft.source_filename ?? "manual entry"}
               </span>
-              <span className="tag tag-neutral">Page 1 of 1</span>
+              <span className={`tag ${draft.status === "draft" ? "tag-warn-fill" : "tag-neutral"}`}>
+                {draft.status === "draft" ? "Draft" : "Filed"}
+              </span>
+              <button className="btn btn-icon" style={{ width: 28, height: 28, minHeight: 28 }}
+                title="Close without deleting" aria-label="Close" onClick={() => setDraft(null)}>
+                <X size={13} />
+              </button>
             </div>
             <div
               style={{
@@ -243,7 +297,13 @@ export function InvoiceWorkbench({
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-4)" }}>
                 <div className="field">
-                  <label>Vendor / contractor</label>
+                  <label>Vendor name</label>
+                  <input className="input" value={draft.vendor ?? ""} placeholder="Any business or store"
+                    disabled={!canUpload}
+                    onChange={(e) => patchDraft("vendor", e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>Contractor in your book</label>
                   <select
                     className="input"
                     value={draft.contractor_id ?? ""}
@@ -254,11 +314,16 @@ export function InvoiceWorkbench({
                       if (name) patchDraft("vendor", name);
                     }}
                   >
-                    <option value="">{draft.vendor ? `${draft.vendor} (unmatched)` : "Unmatched"}</option>
+                    <option value="">Not linked</option>
                     {contractors.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
+                </div>
+                <div className="field">
+                  <label>Due date</label>
+                  <input className="input" type="date" value={draft.due_date ?? ""}
+                    onChange={(e) => patchDraft("due_date", e.target.value)} />
                 </div>
                 <div className="field">
                   <label>Invoice date</label>
@@ -391,7 +456,22 @@ export function InvoiceWorkbench({
               {canUpload && (
                 <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
                   <button className="btn btn-primary" onClick={() => saveDraft("confirm")}>Confirm &amp; file</button>
-                  <button className="btn btn-secondary" onClick={() => saveDraft()}>Save draft</button>
+                  <button className="btn btn-secondary" onClick={() => saveDraft()}>
+                    {draft.status === "draft" ? "Save draft" : "Save changes"}
+                  </button>
+                  {confirmDeleteId === draft.id ? (
+                    <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span style={{ fontSize: 12.5 }}>Delete this invoice for good?</span>
+                      <button className="btn btn-danger" disabled={busy} onClick={() => deleteInvoice(draft.id)}>
+                        <Trash size={14} /> Delete
+                      </button>
+                      <button className="btn btn-ghost" onClick={() => setConfirmDeleteId(null)}>Keep</button>
+                    </span>
+                  ) : (
+                    <button className="btn btn-danger" onClick={() => setConfirmDeleteId(draft.id)}>
+                      <Trash size={14} /> Delete invoice
+                    </button>
+                  )}
                   {Math.abs(labor + parts + fees - (draft.total ?? 0)) > 0.01 && (
                     <button className="btn btn-ghost"
                       onClick={() => patchDraft("total", Math.round((labor + parts + fees) * 100) / 100)}>
@@ -406,7 +486,7 @@ export function InvoiceWorkbench({
       )}
 
       <div className="card">
-        <div className="card-title">Recent invoices</div>
+        <div className="card-title">Invoices</div>
         <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", alignItems: "center" }}>
           <FunnelSimple size={15} style={{ color: "var(--color-accent-text)", flex: "none" }} />
           <select className="input" style={{ minHeight: 36, padding: "4px 10px", fontSize: 12.5, flex: "1 1 150px" }}
@@ -461,9 +541,19 @@ export function InvoiceWorkbench({
               <tr>
                 <th>Vendor</th><th>Property</th><th>Date</th><th>Category</th><th>Status</th>
                 <th style={{ textAlign: "right" }}>Total</th>
+                {canUpload && <th aria-label="Delete" style={{ width: 150 }} />}
               </tr>
             </thead>
             <tbody>
+              {filteredRecent.length === 0 && (
+                <tr>
+                  <td colSpan={canUpload ? 7 : 6} className="text-muted" style={{ fontSize: 13, textAlign: "center", padding: "var(--space-6)" }}>
+                    {recent.length === 0
+                      ? "No invoices yet. Drop a scan above or enter one manually."
+                      : "No invoices match these filters."}
+                  </td>
+                </tr>
+              )}
               {filteredRecent.map((inv) => (
                 <tr key={inv.id} style={{ cursor: "pointer" }}
                   onClick={async () => {
@@ -489,6 +579,28 @@ export function InvoiceWorkbench({
                     )}
                   </td>
                   <td className="num-cell">{money(inv.total, 2)}</td>
+                  {canUpload && (
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+                      {confirmDeleteId === inv.id ? (
+                        <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                          <button className="btn btn-danger" style={{ minHeight: 28, padding: "2px 10px", fontSize: 12 }}
+                            disabled={busy} onClick={() => deleteInvoice(inv.id)}>
+                            Delete
+                          </button>
+                          <button className="btn btn-ghost" style={{ minHeight: 28, padding: "2px 8px", fontSize: 12 }}
+                            onClick={() => setConfirmDeleteId(null)}>
+                            Keep
+                          </button>
+                        </span>
+                      ) : (
+                        <button className="btn btn-icon btn-danger" style={{ width: 28, height: 28, minHeight: 28 }}
+                          title="Delete invoice" aria-label={`Delete invoice from ${inv.contractor_name ?? inv.vendor ?? "unknown vendor"}`}
+                          onClick={() => setConfirmDeleteId(inv.id)}>
+                          <Trash size={13} />
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

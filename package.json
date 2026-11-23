@@ -8,6 +8,9 @@
     "build": "next build",
     "start": "next start",
     "db:seed": "node --env-file-if-exists=.env.local --experimental-strip-types scripts/seed.ts",
+    "db:seed:demo": "node --env-file-if-exists=.env.local --experimental-strip-types scripts/seed-demo.ts",
+    "db:cleanup": "node --env-file-if-exists=.env.local --experimental-strip-types scripts/cleanup-demo.ts",
+    "user:link": "node --env-file-if-exists=.env.local --experimental-strip-types scripts/user-link.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

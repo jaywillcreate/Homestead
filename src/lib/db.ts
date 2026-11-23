@@ -23,7 +23,7 @@ declare global {
   var __homesteadSchemaReady: Promise<void> | undefined;
 }
 
-const NOW_UTC = `to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS')`;
+export const NOW_UTC = `to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS')`;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -274,6 +274,87 @@ CREATE TABLE IF NOT EXISTS notifications (
   error TEXT,
   created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
 );
+
+-- Real sign-in: passwords, one-time invite / reset links, account status, expiring sessions.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_token_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_expires TEXT;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS expires_at TEXT;
+
+CREATE TABLE IF NOT EXISTS login_attempts (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  email TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+);
+CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(email, created_at);
+
+-- Property profiles: ownership & value, insurance, HOA, emergency shutoffs.
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS purchase_date TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS purchase_price DOUBLE PRECISION;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS estimated_value DOUBLE PRECISION;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS property_tax_annual DOUBLE PRECISION;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS parcel_number TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS insurance_carrier TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS insurance_policy TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS insurance_renewal TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS insurance_premium DOUBLE PRECISION;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS hoa_name TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS hoa_contact TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS hoa_dues_monthly DOUBLE PRECISION;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS water_shutoff TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS gas_shutoff TEXT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS electrical_panel TEXT;
+
+-- Systems & appliances inventory, per property.
+CREATE TABLE IF NOT EXISTS property_assets (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'Other',
+  room TEXT,
+  brand TEXT,
+  model TEXT,
+  serial_number TEXT,
+  installed_on TEXT,
+  warranty_expires TEXT,
+  expected_life_years INTEGER,
+  purchase_price DOUBLE PRECISION,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+);
+CREATE INDEX IF NOT EXISTS idx_assets_property ON property_assets(property_id);
+
+-- Paint & finish record, per room / surface.
+CREATE TABLE IF NOT EXISTS property_paints (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  room TEXT NOT NULL,
+  surface TEXT,
+  brand TEXT,
+  color_name TEXT,
+  color_code TEXT,
+  finish TEXT,
+  painted_on TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+);
+CREATE INDEX IF NOT EXISTS idx_paints_property ON property_paints(property_id);
+
+-- Document vault, per property (deed, insurance, tax, permits, manuals…).
+CREATE TABLE IF NOT EXISTS property_documents (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  filename TEXT NOT NULL,
+  title TEXT,
+  size INTEGER NOT NULL DEFAULT 0,
+  kind TEXT NOT NULL DEFAULT 'other',
+  stored_path TEXT NOT NULL,
+  expires_on TEXT,
+  uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+);
+CREATE INDEX IF NOT EXISTS idx_propdocs_property ON property_documents(property_id);
 `;
 
 function getPool(): Pool {

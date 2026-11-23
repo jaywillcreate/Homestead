@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CaretLeft, CaretRight, X, User, Clock, ArrowsClockwise, CurrencyDollar, Plus,
-  GoogleLogo, DownloadSimple,
+  GoogleLogo, DownloadSimple, Trash,
 } from "@phosphor-icons/react";
 import { money, shortDate, dayMonth, CADENCE_LABEL } from "@/lib/format";
 import { googleCalUrl } from "@/lib/calendar";
@@ -40,6 +40,10 @@ export function ScheduleView({
   const router = useRouter();
   const [selectedId, setSelectedId] = useState<number | null>(initialEventId);
   const [addOpen, setAddOpen] = useState(false);
+  const [confirmEventId, setConfirmEventId] = useState<number | null>(null);
+  const [confirmTaskId, setConfirmTaskId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const selected = events.find((e) => e.id === selectedId) ?? null;
 
   const [year, month] = [Number(ym.slice(0, 4)), Number(ym.slice(5, 7))];
@@ -65,6 +69,25 @@ export function ScheduleView({
       body: JSON.stringify(patch),
     });
     router.refresh();
+  }
+
+  /** Delete a single calendar item, or a recurring task with its upcoming items. */
+  async function remove(kind: "events" | "tasks", id: number) {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/${kind}/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error ?? "Delete failed — try again.");
+        return;
+      }
+      if (kind === "events") { setSelectedId(null); setConfirmEventId(null); }
+      else setConfirmTaskId(null);
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -117,7 +140,7 @@ export function ScheduleView({
                 <h5 style={{ marginTop: 2 }}>{selected.name}</h5>
               </div>
               <button className="btn btn-icon" style={{ width: 30, height: 30, minHeight: 30 }}
-                onClick={() => setSelectedId(null)} aria-label="Close">
+                onClick={() => { setSelectedId(null); setConfirmEventId(null); }} aria-label="Close">
                 <X size={14} />
               </button>
             </div>
@@ -160,6 +183,25 @@ export function ScheduleView({
                 </button>
               </div>
             )}
+            {canManage && (
+              confirmEventId === selected.id ? (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12.5 }}>
+                    Delete this calendar item?{selected.task_id ? " The recurring task stays." : ""}
+                  </span>
+                  <button className="btn btn-danger" disabled={busy} onClick={() => remove("events", selected.id)}>
+                    <Trash size={14} /> Delete
+                  </button>
+                  <button className="btn btn-ghost" onClick={() => setConfirmEventId(null)}>Keep</button>
+                </div>
+              ) : (
+                <button className="btn btn-danger" style={{ alignSelf: "flex-start" }}
+                  onClick={() => setConfirmEventId(selected.id)}>
+                  <Trash size={14} /> Delete from calendar
+                </button>
+              )
+            )}
+            {error && <div className="field-error">{error}</div>}
           </div>
         )}
 
@@ -174,11 +216,43 @@ export function ScheduleView({
                   {CADENCE_LABEL[t.cadence]} · {t.contractor_name ?? "Self"}
                 </div>
               </div>
-              <span className="num text-muted" style={{ fontSize: 11, flex: "none" }}>
-                {t.next_due ? dayMonth(t.next_due) : "—"}
-              </span>
+              {confirmTaskId === t.id ? (
+                <span style={{ display: "flex", gap: 4, alignItems: "center", flex: "none" }}>
+                  <button className="btn btn-danger" style={{ minHeight: 28, padding: "2px 10px", fontSize: 12 }}
+                    disabled={busy} onClick={() => remove("tasks", t.id)}
+                    title="Deletes the task and its upcoming calendar items; completed ones stay as history">
+                    Delete
+                  </button>
+                  <button className="btn btn-ghost" style={{ minHeight: 28, padding: "2px 8px", fontSize: 12 }}
+                    onClick={() => setConfirmTaskId(null)}>
+                    Keep
+                  </button>
+                </span>
+              ) : (
+                <>
+                  <span className="num text-muted" style={{ fontSize: 11, flex: "none" }}>
+                    {t.next_due ? dayMonth(t.next_due) : "—"}
+                  </span>
+                  {canManage && (
+                    <button className="btn btn-icon btn-danger" style={{ width: 26, height: 26, minHeight: 26, flex: "none" }}
+                      title="Delete recurring task" aria-label={`Delete recurring task ${t.name}`}
+                      onClick={() => setConfirmTaskId(t.id)}>
+                      <Trash size={12} />
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           ))}
+          {plan.length === 0 && (
+            <p className="card-body" style={{ margin: 0 }}>No recurring tasks yet.</p>
+          )}
+          {confirmTaskId != null && (
+            <p className="card-body" style={{ margin: 0, fontSize: 12 }}>
+              Deleting a recurring task also removes its upcoming calendar items. Completed ones stay as history.
+            </p>
+          )}
+          {error && !selected && <div className="field-error">{error}</div>}
           {canManage && (
             <button className="btn btn-secondary btn-block" onClick={() => setAddOpen(true)}>
               <Plus size={15} /> Add recurring task

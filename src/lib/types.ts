@@ -10,7 +10,11 @@ export interface User {
   phone: string | null;
   /** 1 once the number has been authenticated with an SMS code. */
   phone_verified: number;
+  /** invited = link sent, no password yet · disabled = sign-in blocked. */
+  status: UserStatus;
 }
+
+export type UserStatus = "active" | "invited" | "disabled";
 
 export interface PropertyPhoto {
   id: number;
@@ -198,6 +202,63 @@ export interface PropertyProfile {
   hvac_type: string | null;
   water_heater: string | null;
   notes: string | null;
+  purchase_date: string | null;
+  purchase_price: number | null;
+  estimated_value: number | null;
+  property_tax_annual: number | null;
+  parcel_number: string | null;
+  insurance_carrier: string | null;
+  insurance_policy: string | null;
+  insurance_renewal: string | null;
+  insurance_premium: number | null;
+  hoa_name: string | null;
+  hoa_contact: string | null;
+  hoa_dues_monthly: number | null;
+  water_shutoff: string | null;
+  gas_shutoff: string | null;
+  electrical_panel: string | null;
+}
+
+/** A system, appliance or fixture tracked for a property. */
+export interface PropertyAsset {
+  id: number;
+  property_id: number;
+  name: string;
+  category: string;
+  room: string | null;
+  brand: string | null;
+  model: string | null;
+  serial_number: string | null;
+  installed_on: string | null;
+  warranty_expires: string | null;
+  expected_life_years: number | null;
+  purchase_price: number | null;
+  notes: string | null;
+}
+
+export interface PropertyPaint {
+  id: number;
+  property_id: number;
+  room: string;
+  surface: string | null;
+  brand: string | null;
+  color_name: string | null;
+  color_code: string | null;
+  finish: string | null;
+  painted_on: string | null;
+  notes: string | null;
+}
+
+export interface PropertyDocument {
+  id: number;
+  property_id: number;
+  filename: string;
+  title: string | null;
+  size: number;
+  kind: string;
+  stored_path: string;
+  expires_on: string | null;
+  created_at: string;
 }
 
 export const PROPERTY_TYPES = [

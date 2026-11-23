@@ -9,6 +9,8 @@ const itemSchema = z.object({
   unit_price: z.coerce.number().min(0),
   quantity: z.coerce.number().min(0),
   note: z.string().max(200).nullable().optional(),
+  vendor: z.string().max(60).nullable().optional(),
+  url: z.string().url().max(600).startsWith("https://").nullable().optional(),
 });
 
 const createSchema = z.object({

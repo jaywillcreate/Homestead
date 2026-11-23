@@ -16,6 +16,9 @@ export interface MaterialItem {
   unit_price: number;
   quantity: number;
   note?: string | null;
+  /** Set when the price came from a specific retailer listing. */
+  vendor?: string | null;
+  url?: string | null;
 }
 
 export interface ResearchResult {
@@ -44,7 +47,8 @@ export function researchAvailable(): boolean {
   return Boolean(process.env.ANTHROPIC_API_KEY);
 }
 
-export async function researchMaterials(query: string): Promise<ResearchResult> {
+/** `where` is a human place name ("San Antonio, TX 78230") used to localize prices. */
+export async function researchMaterials(query: string, where?: string | null): Promise<ResearchResult> {
   if (!researchAvailable()) {
     return { ...sampleMaterials(query), error: null };
   }
@@ -58,7 +62,7 @@ export async function researchMaterials(query: string): Promise<ResearchResult> 
         {
           role: "user",
           content: `Research current US retail prices for the materials needed for this home-maintenance job: "${query}".
-Use web search to ground prices in real current listings (big-box home improvement retailers are ideal).
+Use web search to ground prices in real current listings (big-box home improvement retailers are ideal).${where ? `\nThe shopper is in ${where} — prefer prices and availability at stores serving that area, and say so in the summary.` : ""}
 Return 5-12 line items covering the main materials, each with a realistic unit price, a sensible spec/unit, and a suggested quantity for the job as described. Round prices to cents.`,
         },
       ],

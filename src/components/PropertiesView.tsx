@@ -1,19 +1,23 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Buildings, Plus, PencilSimple, Trash, MapPin, Thermometer, Drop, House,
-  Camera, X,
+  Camera, X, ArrowRight,
 } from "@phosphor-icons/react";
 import { money, fileHref } from "@/lib/format";
-import { PROPERTY_TYPES, type PropertyProfile, type PropertyPhoto } from "@/lib/types";
+import type { PropertyProfile, PropertyPhoto } from "@/lib/types";
+import { PropertyDialog } from "./PropertyDialog";
 
 type PropertyWithStats = PropertyProfile & {
   job_count: number;
   lifetime_spend: number;
   open_requests: number;
   upcoming_events: number;
+  asset_count: number;
+  document_count: number;
   photos: PropertyPhoto[];
 };
 
@@ -76,8 +80,9 @@ export function PropertiesView({
         )}
       </div>
       <p className="card-body" style={{ margin: 0 }}>
-        Property profiles feed the rest of Homestead — bid requests are assigned to a property,
-        and its systems details help contractors quote accurately.
+        Each property has a full profile: systems and appliance inventory with warranty tracking,
+        a document vault, paint records, value and yearly costs, emergency shutoffs, and its
+        maintenance history.
       </p>
 
       <div className="grid-directory">
@@ -98,7 +103,9 @@ export function PropertiesView({
                   <House size={18} />
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="card-title">{p.label}</div>
+                  <Link href={`/properties/${p.id}`} className="card-title" style={{ textDecoration: "none", color: "inherit" }}>
+                    {p.label}
+                  </Link>
                   <div className="text-muted" style={{ fontSize: 12, display: "flex", gap: 4, alignItems: "center" }}>
                     <MapPin size={12} />
                     {p.address ?? "No address"}{cityLine ? ` · ${cityLine}` : ""}
@@ -174,6 +181,8 @@ export function PropertiesView({
                   ["Lifetime spend", money(p.lifetime_spend)],
                   ["Open tickets", String(p.open_requests)],
                   ["Upcoming", String(p.upcoming_events)],
+                  ["Inventory", String(p.asset_count)],
+                  ["Documents", String(p.document_count)],
                 ].map(([label, value]) => (
                   <div key={label}>
                     <div className="fact-label">{label}</div>
@@ -181,6 +190,9 @@ export function PropertiesView({
                   </div>
                 ))}
               </div>
+              <Link href={`/properties/${p.id}`} className="btn btn-secondary" style={{ justifyContent: "center", textDecoration: "none" }}>
+                Open full profile <ArrowRight size={14} />
+              </Link>
             </div>
           );
         })}
@@ -315,207 +327,6 @@ function PropertyPhotoDialog({
         ) : (
           <p className="card-body" style={{ margin: 0 }}>{photo.caption ?? "No caption"}</p>
         )}
-      </div>
-    </div>
-  );
-}
-
-function PropertyDialog({
-  existing, canDelete, onClose, onDone,
-}: {
-  existing: PropertyProfile | null;
-  canDelete: boolean;
-  onClose: () => void;
-  onDone: (msg: string) => void;
-}) {
-  const [form, setForm] = useState({
-    label: existing?.label ?? "",
-    address: existing?.address ?? "",
-    city: existing?.city ?? "",
-    state: existing?.state ?? "",
-    zip: existing?.zip ?? "",
-    property_type: existing?.property_type ?? "",
-    year_built: existing?.year_built != null ? String(existing.year_built) : "",
-    sqft: existing?.sqft != null ? String(existing.sqft) : "",
-    lot_size: existing?.lot_size ?? "",
-    beds: existing?.beds != null ? String(existing.beds) : "",
-    baths: existing?.baths != null ? String(existing.baths) : "",
-    roof_type: existing?.roof_type ?? "",
-    hvac_type: existing?.hvac_type ?? "",
-    water_heater: existing?.water_heater ?? "",
-    notes: existing?.notes ?? "",
-  });
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const set = (key: keyof typeof form, value: string) =>
-    setForm((f) => ({ ...f, [key]: value }));
-
-  async function save() {
-    setError(null);
-    setBusy(true);
-    try {
-      const payload = {
-        label: form.label.trim(),
-        address: form.address.trim() || null,
-        city: form.city.trim() || null,
-        state: form.state.trim() || null,
-        zip: form.zip.trim() || null,
-        property_type: form.property_type || null,
-        year_built: form.year_built === "" ? null : Number(form.year_built),
-        sqft: form.sqft === "" ? null : Number(form.sqft),
-        lot_size: form.lot_size.trim() || null,
-        beds: form.beds === "" ? null : Number(form.beds),
-        baths: form.baths === "" ? null : Number(form.baths),
-        roof_type: form.roof_type.trim() || null,
-        hvac_type: form.hvac_type.trim() || null,
-        water_heater: form.water_heater.trim() || null,
-        notes: form.notes.trim() || null,
-      };
-      const res = await fetch(existing ? `/api/properties/${existing.id}` : "/api/properties", {
-        method: existing ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        setError(body.error ?? "Save failed");
-        return;
-      }
-      onDone(existing ? "Property updated." : `Property added: ${payload.label}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove() {
-    if (!existing) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/properties/${existing.id}`, { method: "DELETE" });
-      const body = await res.json();
-      if (!res.ok) {
-        setError(body.error ?? "Delete failed");
-        return;
-      }
-      onDone("Property removed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="dialog-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog" role="dialog" aria-label={existing ? "Edit property" : "Add property"}
-        style={{ width: "min(620px, 100%)", maxHeight: "90vh", overflowY: "auto" }}>
-        <div className="dialog-title">{existing ? "Edit property" : "Add property"}</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
-          <div className="field" style={{ gridColumn: "1 / -1" }}>
-            <label>Label</label>
-            <input className="input" value={form.label} onChange={(e) => set("label", e.target.value)}
-              placeholder="e.g. Primary residence, Lake house, Rental #2" autoFocus={!existing} />
-          </div>
-          <div className="field" style={{ gridColumn: "1 / -1" }}>
-            <label>Street address</label>
-            <input className="input" value={form.address} onChange={(e) => set("address", e.target.value)}
-              placeholder="4218 Cedar Creek Ln" />
-          </div>
-          <div className="field">
-            <label>City</label>
-            <input className="input" value={form.city} onChange={(e) => set("city", e.target.value)} />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
-            <div className="field">
-              <label>State</label>
-              <input className="input" value={form.state} onChange={(e) => set("state", e.target.value)}
-                placeholder="TX" maxLength={20} />
-            </div>
-            <div className="field">
-              <label>ZIP</label>
-              <input className="input num" inputMode="numeric" maxLength={5} value={form.zip}
-                onChange={(e) => set("zip", e.target.value.replace(/\D/g, ""))} />
-            </div>
-          </div>
-          <div className="field">
-            <label>Type</label>
-            <select className="input" value={form.property_type}
-              onChange={(e) => set("property_type", e.target.value)}>
-              <option value="">—</option>
-              {PROPERTY_TYPES.map((t) => <option key={t}>{t}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label>Year built</label>
-            <input className="input num" type="number" value={form.year_built}
-              onChange={(e) => set("year_built", e.target.value)} placeholder="1998" />
-          </div>
-          <div className="field">
-            <label>Square feet</label>
-            <input className="input num" type="number" value={form.sqft}
-              onChange={(e) => set("sqft", e.target.value)} placeholder="2450" />
-          </div>
-          <div className="field">
-            <label>Lot size</label>
-            <input className="input" value={form.lot_size}
-              onChange={(e) => set("lot_size", e.target.value)} placeholder="0.28 acre" />
-          </div>
-          <div className="field">
-            <label>Bedrooms</label>
-            <input className="input num" type="number" value={form.beds}
-              onChange={(e) => set("beds", e.target.value)} />
-          </div>
-          <div className="field">
-            <label>Bathrooms</label>
-            <input className="input num" type="number" step="0.5" value={form.baths}
-              onChange={(e) => set("baths", e.target.value)} />
-          </div>
-          <div className="field">
-            <label>Roof</label>
-            <input className="input" value={form.roof_type}
-              onChange={(e) => set("roof_type", e.target.value)} placeholder="Architectural shingle, 2019" />
-          </div>
-          <div className="field">
-            <label>HVAC</label>
-            <input className="input" value={form.hvac_type}
-              onChange={(e) => set("hvac_type", e.target.value)} placeholder="Gas furnace + AC, 2021" />
-          </div>
-          <div className="field" style={{ gridColumn: "1 / -1" }}>
-            <label>Water heater</label>
-            <input className="input" value={form.water_heater}
-              onChange={(e) => set("water_heater", e.target.value)} placeholder="50-gal gas, 2026" />
-          </div>
-          <div className="field" style={{ gridColumn: "1 / -1" }}>
-            <label>Notes — access, gate codes, quirks</label>
-            <textarea className="input" style={{ minHeight: 72 }} value={form.notes}
-              onChange={(e) => set("notes", e.target.value)}
-              placeholder="Gate code 4218 · crawlspace access on north side · sprinkler shutoff in garage" />
-          </div>
-        </div>
-        {error && <div className="field-error">{error}</div>}
-        <div className="dialog-actions" style={{ justifyContent: existing && canDelete ? "space-between" : "flex-end" }}>
-          {existing && canDelete && (
-            confirmDelete ? (
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 12.5 }}>Remove this property?</span>
-                <button className="btn btn-danger" disabled={busy} onClick={remove}>
-                  <Trash size={14} /> Remove
-                </button>
-                <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>Keep</button>
-              </div>
-            ) : (
-              <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>
-                <Trash size={14} /> Remove property
-              </button>
-            )
-          )}
-          <div style={{ display: "flex", gap: "var(--space-2)" }}>
-            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy || !form.label.trim()} onClick={save}>
-              {busy ? "Saving…" : existing ? "Save property" : "Add property"}
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );

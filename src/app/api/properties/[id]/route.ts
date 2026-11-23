@@ -1,4 +1,5 @@
-import { run, qOne, logActivity } from "@/lib/db";
+import { run, q, qOne, logActivity } from "@/lib/db";
+import { deleteUpload } from "@/lib/storage";
 import { requirePermission, permissionResponse } from "@/lib/auth";
 import { propertySchema, PROPERTY_FIELDS as FIELDS } from "@/lib/property-schema";
 
@@ -60,8 +61,16 @@ export async function DELETE(_req: Request, { params }: Params) {
         { status: 409 }
       );
     }
+    const files = await q<{ f: string }>(
+      `SELECT stored_path AS f FROM property_photos WHERE property_id = $1
+       UNION ALL SELECT stored_path FROM property_documents WHERE property_id = $1`,
+      [Number(id)]
+    );
+    // Tasks only point at the property; drop the pointer rather than block the removal.
+    await run("UPDATE maintenance_tasks SET property_id = NULL WHERE property_id = $1", [Number(id)]);
     await run("DELETE FROM user_properties WHERE property_id = $1", [Number(id)]);
-    await run("DELETE FROM properties WHERE id = $1", [Number(id)]);
+    await run("DELETE FROM properties WHERE id = $1", [Number(id)]); // photos, inventory, paint, documents cascade
+    for (const { f } of files) await deleteUpload(f);
     await logActivity("property", `Property removed: ${existing.label}`);
     return Response.json({ ok: true });
   } catch (err) {

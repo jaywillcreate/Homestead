@@ -42,3 +42,23 @@ export async function PATCH(req: Request, { params }: Params) {
     return permissionResponse(err) ?? Response.json({ error: "Server error" }, { status: 500 });
   }
 }
+
+/** DELETE → remove any calendar item, whatever its status. A recurring task it belongs to is untouched. */
+export async function DELETE(_req: Request, { params }: Params) {
+  try {
+    await requirePermission("manage_schedule");
+    const id = Number((await params).id);
+    const event = Number.isInteger(id)
+      ? await qOne<{ id: number; name: string; scheduled_for: string }>(
+          "SELECT id, name, scheduled_for FROM scheduled_events WHERE id = $1",
+          [id]
+        )
+      : null;
+    if (!event) return Response.json({ error: "Not found" }, { status: 404 });
+    await run("DELETE FROM scheduled_events WHERE id = $1", [id]);
+    await logActivity("schedule", `${event.name} (${event.scheduled_for}) removed from the calendar`);
+    return Response.json({ ok: true });
+  } catch (err) {
+    return permissionResponse(err) ?? Response.json({ error: "Server error" }, { status: 500 });
+  }
+}

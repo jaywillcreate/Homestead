@@ -14,6 +14,7 @@ export type Capability =
   | "manage_bids"
   | "manage_users"
   | "manage_properties"
+  | "edit_property_records"
   | "manage_schedule"
   | "send_notifications";
 
@@ -26,6 +27,7 @@ export const PERMISSIONS: Record<Capability, Role[]> = {
   manage_bids: ["owner", "manager"],
   manage_users: ["owner"],
   manage_properties: ["owner"],
+  edit_property_records: ["owner", "manager"],
   manage_schedule: ["owner", "manager"],
   send_notifications: ["owner", "manager"],
 };
@@ -42,7 +44,9 @@ export const MATRIX_ROWS: { label: string; capability: Capability }[] = [
   { label: "Upload job photos", capability: "upload_photos" },
   { label: "Run and export reports", capability: "run_reports" },
   { label: "Request and accept bids", capability: "manage_bids" },
-  { label: "Invite people & set roles", capability: "manage_users" },
+  { label: "Invite, disable & remove people", capability: "manage_users" },
   { label: "Add or remove properties", capability: "manage_properties" },
+  { label: "Edit property inventory, paint & documents", capability: "edit_property_records" },
+  { label: "Edit the schedule & recurring tasks", capability: "manage_schedule" },
   { label: "Send phone notifications", capability: "send_notifications" },
 ];

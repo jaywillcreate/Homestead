@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  MagnifyingGlass, Plus, X, FloppyDisk, Trash, Package, Globe, Flask, Scales,
+  MagnifyingGlass, Plus, X, FloppyDisk, Trash, Package, Globe, Flask, Scales, ShoppingCart, ArrowSquareOut,
 } from "@phosphor-icons/react";
+import { StoresPanel, ProductPicker, type ChosenStore } from "./MaterialsShop";
 import { money, shortDate } from "@/lib/format";
 import type { MaterialItem } from "@/lib/materials";
 import type { MaterialEstimateRow } from "@/lib/queries";
@@ -17,15 +18,22 @@ interface RequestOption {
 }
 
 export function MaterialsView({
-  requests, estimates, liveResearch, canSave,
+  requests, estimates, liveResearch, liveCatalog, defaultZip, canSave,
 }: {
   requests: RequestOption[];
   estimates: MaterialEstimateRow[];
   liveResearch: boolean;
+  /** True when the Home Depot catalog (SERPAPI_API_KEY) is connected. */
+  liveCatalog: boolean;
+  /** ZIP of the first property on file, used as the starting area. */
+  defaultZip: string;
   canSave: boolean;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
+  const [zip, setZip] = useState(defaultZip);
+  const [store, setStore] = useState<ChosenStore | null>(null);
+  const [shopIndex, setShopIndex] = useState<number | null>(null);
   const [items, setItems] = useState<MaterialItem[]>([]);
   const [source, setSource] = useState<"web" | "sample" | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
@@ -55,7 +63,7 @@ export function MaterialsView({
       const res = await fetch("/api/materials/research", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim() }),
+        body: JSON.stringify({ query: query.trim(), zip: /^\d{5}$/.test(zip) ? zip : null }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -137,8 +145,9 @@ export function MaterialsView({
         </div>
         <p className="card-body" style={{ margin: 0 }}>
           Describe the job and get an itemized materials list with{" "}
-          {liveResearch ? "live web-researched pricing" : "pricing"} — then tune quantities and
-          compare against contractor bids to see what you&apos;re really paying for labor.
+          {liveResearch ? "live web-researched pricing" : "pricing"} for your ZIP code. Use
+          Shop on any row to {liveCatalog ? "pull a live Home Depot price and local stock" : "open that item at nearby retailers"},
+          then compare the total against contractor bids.
         </p>
         <form
           style={{ display: "flex", gap: "var(--space-2)", maxWidth: 680, flexWrap: "wrap" }}
@@ -146,7 +155,12 @@ export function MaterialsView({
         >
           <input className="input" style={{ flex: "2 1 300px" }}
             placeholder='e.g. "cedar privacy fence, 120 linear ft, 6 ft tall"'
+            aria-label="Describe the job"
             value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input className="input num" style={{ flex: "0 1 110px" }} inputMode="numeric" maxLength={5}
+            placeholder="ZIP code" aria-label="ZIP code for local stores and prices"
+            value={zip}
+            onChange={(e) => { setZip(e.target.value.replace(/\D/g, "")); setStore(null); }} />
           <button className="btn btn-primary" disabled={researching || query.trim().length < 3}>
             <MagnifyingGlass size={15} /> {researching ? "Researching…" : "Research materials"}
           </button>
@@ -163,15 +177,22 @@ export function MaterialsView({
             <span style={{ fontSize: 13 }}>{notice}</span>
           </div>
         )}
+        {items.length === 0 && !researching && (
+          <button className="btn btn-ghost" style={{ alignSelf: "flex-start" }} onClick={addItem}>
+            <Plus size={14} /> Or start a blank list and shop each item
+          </button>
+        )}
         {items.length > 0 && (
           <>
             <div className="text-muted" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 6 }}>
               {source === "web" ? (
                 <><Globe size={12} style={{ color: "var(--color-accent-text)" }} /> Live web pricing via Claude</>
+              ) : source === "sample" ? (
+                <><Flask size={12} /> Sample pricing — set ANTHROPIC_API_KEY for live research, or use Shop on each row</>
               ) : (
-                <><Flask size={12} /> Sample pricing — set ANTHROPIC_API_KEY in .env.local for live research</>
+                <><ShoppingCart size={12} /> Your list — use Shop on a row to pull a store price</>
               )}
-              {summary && <span>· {summary}</span>}
+              {summary && source === "web" && <span>· {summary}</span>}
             </div>
             <div style={{ overflowX: "auto" }}>
               <table className="table">
@@ -181,7 +202,7 @@ export function MaterialsView({
                     <th style={{ textAlign: "right" }}>Unit price</th>
                     <th style={{ textAlign: "right" }}>Qty</th>
                     <th style={{ textAlign: "right" }}>Line total</th>
-                    <th aria-label="Remove" />
+                    <th aria-label="Shop and remove" />
                   </tr>
                 </thead>
                 <tbody>
@@ -191,6 +212,16 @@ export function MaterialsView({
                         <input className="input" style={{ minHeight: 34, padding: "4px 10px", fontSize: 13 }}
                           value={it.name} placeholder="Material"
                           onChange={(e) => patchItem(i, { name: e.target.value })} />
+                        {(it.vendor || it.note) && (
+                          <div className="text-muted" style={{ fontSize: 11, marginTop: 2 }}>
+                            {it.url ? (
+                              <a href={it.url} target="_blank" rel="noreferrer">
+                                {it.vendor ?? "Listing"} <ArrowSquareOut size={9} />
+                              </a>
+                            ) : it.vendor}
+                            {it.vendor && it.note ? " · " : ""}{it.note}
+                          </div>
+                        )}
                       </td>
                       <td>
                         <input className="input" style={{ minHeight: 34, padding: "4px 10px", fontSize: 12.5 }}
@@ -210,9 +241,14 @@ export function MaterialsView({
                           onChange={(e) => patchItem(i, { quantity: Number(e.target.value) })} />
                       </td>
                       <td className="num-cell">{money(it.unit_price * it.quantity, 2)}</td>
-                      <td style={{ textAlign: "right" }}>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button className="btn btn-ghost" style={{ minHeight: 26, padding: "0 8px", fontSize: 12 }}
+                          title="Find this at nearby stores" disabled={it.name.trim().length < 2}
+                          onClick={() => setShopIndex(i)}>
+                          <ShoppingCart size={12} /> Shop
+                        </button>
                         <button className="btn btn-icon btn-danger" style={{ width: 26, height: 26, minHeight: 26 }}
-                          title="Remove" onClick={() => removeItem(i)}>
+                          title="Remove" aria-label={`Remove ${it.name || "item"}`} onClick={() => removeItem(i)}>
                           <X size={12} />
                         </button>
                       </td>
@@ -301,6 +337,8 @@ export function MaterialsView({
         )}
       </div>
 
+      <StoresPanel zip={zip} chosen={store} onChoose={setStore} />
+
       {estimates.length > 0 && (
         <div className="card">
           <div className="card-title">Saved estimates</div>
@@ -328,7 +366,9 @@ export function MaterialsView({
                     <td>
                       {e.source === "web"
                         ? <span className="tag tag-accent-2">Web</span>
-                        : <span className="tag tag-outline">Sample</span>}
+                        : e.source === "sample"
+                          ? <span className="tag tag-outline">Sample</span>
+                          : <span className="tag tag-outline">Manual</span>}
                     </td>
                     <td className="num-cell">{money(e.total, 2)}</td>
                     {canSave && (
@@ -345,6 +385,28 @@ export function MaterialsView({
             </table>
           </div>
         </div>
+      )}
+      {shopIndex != null && items[shopIndex] && (
+        <ProductPicker
+          initialQuery={[items[shopIndex].name, items[shopIndex].vendor ? "" : items[shopIndex].spec].filter(Boolean).join(" ").trim()}
+          zip={zip}
+          store={store}
+          liveCatalog={liveCatalog}
+          onClose={() => setShopIndex(null)}
+          onPick={(p) => {
+            patchItem(shopIndex, {
+              name: p.title.slice(0, 200),
+              spec: [p.brand, p.model ? `Model ${p.model}` : null, p.unit ? `per ${p.unit}` : null].filter(Boolean).join(" · ").slice(0, 200),
+              unit_price: p.price ?? items[shopIndex].unit_price,
+              vendor: p.vendor,
+              url: p.url && p.url.startsWith("https://") ? p.url.slice(0, 600) : null,
+              note: [`ZIP ${zip}`, p.pickup?.quantity != null ? `${p.pickup.quantity} in stock${p.pickup.store ? ` at ${p.pickup.store}` : ""}` : null]
+                .filter(Boolean).join(" · ").slice(0, 200),
+            });
+            setShopIndex(null);
+            showToast("Price added from Home Depot.");
+          }}
+        />
       )}
       {toast && <div className="toast">{toast}</div>}
     </>

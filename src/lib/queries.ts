@@ -419,14 +419,70 @@ export async function listPropertyProfiles() {
     lifetime_spend: number;
     open_requests: number;
     upcoming_events: number;
+    asset_count: number;
+    document_count: number;
   }>(
     `SELECT p.*,
        (SELECT COUNT(*)::int FROM jobs j WHERE j.property_id = p.id) AS job_count,
        COALESCE((SELECT SUM(j.amount) FROM jobs j WHERE j.property_id = p.id), 0)::float8 AS lifetime_spend,
        (SELECT COUNT(*)::int FROM bid_requests r WHERE r.property_id = p.id AND r.status = 'open') AS open_requests,
-       (SELECT COUNT(*)::int FROM scheduled_events e WHERE e.property_id = p.id AND e.status != 'done') AS upcoming_events
+       (SELECT COUNT(*)::int FROM scheduled_events e WHERE e.property_id = p.id AND e.status != 'done') AS upcoming_events,
+       (SELECT COUNT(*)::int FROM property_assets a WHERE a.property_id = p.id) AS asset_count,
+       (SELECT COUNT(*)::int FROM property_documents d WHERE d.property_id = p.id) AS document_count
      FROM properties p ORDER BY p.id`
   );
+}
+
+/** Everything the single-property profile page shows. */
+export async function getPropertyDetail(id: number) {
+  const property = await qOne<import("./types").PropertyProfile & { job_count: number; lifetime_spend: number }>(
+    `SELECT p.*,
+       (SELECT COUNT(*)::int FROM jobs j WHERE j.property_id = p.id AND COALESCE(j.notes,'') != '__photo_section__') AS job_count,
+       COALESCE((SELECT SUM(j.amount) FROM jobs j WHERE j.property_id = p.id), 0)::float8 AS lifetime_spend
+     FROM properties p WHERE p.id = $1`,
+    [id]
+  );
+  if (!property) return null;
+  const [assets, paints, documents, photos, jobs, events, spendByYear, propertyCount] = await Promise.all([
+    q<import("./types").PropertyAsset>(
+      "SELECT * FROM property_assets WHERE property_id = $1 ORDER BY category, name",
+      [id]
+    ),
+    q<import("./types").PropertyPaint>(
+      "SELECT * FROM property_paints WHERE property_id = $1 ORDER BY room, surface NULLS LAST, id",
+      [id]
+    ),
+    q<import("./types").PropertyDocument>(
+      `SELECT id, property_id, filename, title, size, kind, stored_path, expires_on, created_at
+       FROM property_documents WHERE property_id = $1 ORDER BY kind, id DESC`,
+      [id]
+    ),
+    q<import("./types").PropertyPhoto>(
+      `SELECT id, property_id, stored_path, original_name, caption, sort_order, created_at
+       FROM property_photos WHERE property_id = $1 ORDER BY sort_order NULLS LAST, id`,
+      [id]
+    ),
+    q<{ id: number; title: string; trade: string | null; performed_on: string | null; amount: number; status: string; contractor_name: string | null }>(
+      `SELECT j.id, j.title, j.trade, j.performed_on, j.amount::float8 AS amount, j.status, c.business_name AS contractor_name
+       FROM jobs j LEFT JOIN contractors c ON c.id = j.contractor_id
+       WHERE j.property_id = $1 AND COALESCE(j.notes,'') != '__photo_section__'
+       ORDER BY j.performed_on DESC NULLS LAST, j.id DESC LIMIT 60`,
+      [id]
+    ),
+    q<ScheduledEvent & { contractor_name: string | null }>(
+      `SELECT e.*, c.business_name AS contractor_name
+       FROM scheduled_events e LEFT JOIN contractors c ON c.id = e.contractor_id
+       WHERE e.property_id = $1 AND e.status != 'done' ORDER BY e.scheduled_for LIMIT 8`,
+      [id]
+    ),
+    q<{ year: string; total: number; jobs: number }>(
+      `SELECT substr(performed_on,1,4) AS year, SUM(amount)::float8 AS total, COUNT(*)::int AS jobs
+       FROM jobs WHERE property_id = $1 AND performed_on IS NOT NULL GROUP BY 1 ORDER BY 1 DESC LIMIT 6`,
+      [id]
+    ),
+    qOne<{ n: number }>("SELECT COUNT(*)::int AS n FROM properties"),
+  ]);
+  return { property, assets, paints, documents, photos, jobs, events, spendByYear, propertyCount: propertyCount?.n ?? 1 };
 }
 
 export async function listPropertyPhotos() {
@@ -566,9 +622,11 @@ export async function listMaterialEstimates() {
 // ------------------------------------------------------------------ users
 
 export async function listUsers() {
-  // Explicit columns: the pending phone_verify_code must never reach the client.
-  return q<User & { properties: number }>(
+  // Explicit columns: password hashes, link tokens and phone codes must never reach the client.
+  return q<User & { properties: number; has_password: boolean; link_pending: boolean }>(
     `SELECT u.id, u.name, u.email, u.role, u.last_active, u.theme_prefs, u.phone, u.phone_verified,
+       u.status, (u.password_hash IS NOT NULL) AS has_password,
+       (u.invite_token_hash IS NOT NULL AND u.invite_expires > to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS')) AS link_pending,
        (SELECT COUNT(*)::int FROM user_properties up WHERE up.user_id = u.id) AS properties
      FROM users u ORDER BY CASE u.role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 ELSE 2 END`
   );
